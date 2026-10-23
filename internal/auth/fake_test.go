@@ -74,7 +74,7 @@ func (f *fakeAPI) authorize(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.pub = pub
 	f.mu.Unlock()
-	writeJSON(w, 200, AuthorizeResponse{DeviceCode: "dc", UserCode: "ABCD-EFGH", VerificationURI: "https://app.example/device", Interval: 1})
+	writeJSON(w, 200, AuthorizeResponse{DeviceCode: "dc", UserCode: "ABCD-EFGH", VerificationURI: "http://" + r.Host + "/device", Interval: 1})
 }
 
 func (f *fakeAPI) token(w http.ResponseWriter, _ *http.Request) {

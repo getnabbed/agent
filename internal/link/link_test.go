@@ -439,3 +439,57 @@ func TestTelemetryLatestWins(t *testing.T) {
 		t.Fatalf("drain = %v, want only the latest value", out)
 	}
 }
+
+// L3: an already-expired command must come back as a recorded
+// DEADLINE_EXCEEDED, not an unrecorded internal failure.
+func TestExpiredCommandIsRecordedAsDeadlineExceeded(t *testing.T) {
+	results := make(chan *pb.CommandResult, 1)
+
+	c, g, _, st := start(t, func(_ int, srv pb.AgentGatewayService_ConnectServer) error {
+		_ = srv.Send(welcome(1000))
+		_ = srv.Send(&pb.ControlMessage{Kind: &pb.ControlMessage_Command{Command: &pb.Command{
+			Id: "late", DeadlineMs: time.Now().Add(-time.Minute).UnixMilli(),
+			Kind: &pb.Command_RescanLibrary{RescanLibrary: &pb.RescanLibrary{}},
+		}}})
+
+		return ackHeartbeats(srv, func(m *pb.AgentMessage) {
+			if r := m.GetCommandResult(); r != nil {
+				results <- r
+			}
+		})
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = c.Run(ctx) }()
+
+	nextConn(t, g)
+
+	select {
+	case r := <-results:
+		if r.GetErrorCode() != pb.CommandErrorCode_COMMAND_ERROR_CODE_DEADLINE_EXCEEDED {
+			t.Fatalf("result = %v, want DEADLINE_EXCEEDED", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no result")
+	}
+
+	if _, last, _, _ := st.HelloState(context.Background()); last != "late" {
+		t.Fatalf("last command = %q, want the expired command recorded", last)
+	}
+}
+
+func TestImplausibleServerTimeIsIgnored(t *testing.T) {
+	c, _, _, _ := start(t, func(int, pb.AgentGatewayService_ConnectServer) error { return nil })
+	s := &session{c: c}
+
+	s.observeClock(time.Now().Add(48 * time.Hour))
+	if off := c.cfg.Clock.Offset(); off != 0 {
+		t.Fatalf("offset = %v after an implausible server time, want 0", off)
+	}
+
+	s.observeClock(time.Now().Add(90 * time.Second))
+	if off := c.cfg.Clock.Offset(); off < 80*time.Second {
+		t.Fatalf("offset = %v, want a plausible correction applied", off)
+	}
+}

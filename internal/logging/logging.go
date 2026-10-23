@@ -89,6 +89,10 @@ func New(opts Options) *slog.Logger {
 // NewHandler returns the slog.Handler that New wraps, for callers that want
 // to compose it with their own handler middleware.
 func NewHandler(opts Options) slog.Handler {
+	return Sanitize(newHandler(opts))
+}
+
+func newHandler(opts Options) slog.Handler {
 	w := opts.Output
 	if w == nil {
 		w = os.Stderr

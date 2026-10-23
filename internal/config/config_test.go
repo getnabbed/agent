@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -138,5 +139,27 @@ func TestEveryEnvVarIsDocumented(t *testing.T) {
 		if !strings.Contains(string(readme), "`"+e.Name()+"`") {
 			t.Errorf("%s is not documented in README.md", e.Name())
 		}
+	}
+}
+
+func TestWarnsOnReadableSecretFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mode bits do not apply on Windows")
+	}
+
+	p := write(t, "usenet:\n  provider: nntps://u:p@h\n")
+	if err := os.Chmod(p, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, src, err := Load(p, env(nil))
+	if err != nil || len(src.Warnings) != 1 {
+		t.Fatalf("warnings = %v, err = %v; want one warning", src.Warnings, err)
+	}
+
+	_ = os.Chmod(p, 0o600)
+
+	if _, src, _ := Load(p, env(nil)); len(src.Warnings) != 0 {
+		t.Fatalf("warnings for a private file: %v", src.Warnings)
 	}
 }

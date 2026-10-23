@@ -97,7 +97,7 @@ func TestRunPairsConnectsAndStopsOnRevoke(t *testing.T) {
 		gw.mu.Lock()
 		gw.pub = pub
 		gw.mu.Unlock()
-		_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "dc", "user_code": "WXYZ-1234", "verification_uri": "https://app.example/device", "interval": 1})
+		_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "dc", "user_code": "WXYZ-1234", "verification_uri": "http://" + r.Host + "/device", "interval": 1})
 	})
 	mux.HandleFunc("POST /api/device/token", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "agent-9", "tenant_id": "t-9", "access_token": e2eJWT, "refresh_token": "rt", "gateway_url": "http://" + lis.Addr().String()})

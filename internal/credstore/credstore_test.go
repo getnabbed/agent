@@ -109,3 +109,61 @@ func TestLogValueRedactsSecrets(t *testing.T) {
 		t.Fatalf("secret leaked into log: %s", buf.String())
 	}
 }
+
+func TestSharedDirectoryIsRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mode bits do not apply on Windows")
+	}
+
+	dir := filepath.Join(t.TempDir(), "shared")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "family-photos.jpg"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := OpenWith(dir, PlaintextProtector{}, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "not dedicated") {
+		t.Fatalf("err = %v, want refusal of a shared directory", err)
+	}
+
+	if fi, _ := os.Stat(dir); fi.Mode().Perm() != 0o755 {
+		t.Fatalf("shared directory permissions were changed to %v", fi.Mode().Perm())
+	}
+}
+
+func TestAgentOwnedLooseDirectoryIsTightened(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mode bits do not apply on Windows")
+	}
+
+	dir := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(filepath.Join(dir, "downloads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := OpenWith(dir, PlaintextProtector{}, slog.New(slog.DiscardHandler)); err != nil {
+		t.Fatal(err)
+	}
+
+	if fi, _ := os.Stat(dir); fi.Mode().Perm() != 0o700 {
+		t.Fatalf("mode = %v, want 0700", fi.Mode().Perm())
+	}
+}
+
+func TestOpenExistingTouchesNothing(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "missing")
+
+	if _, err := OpenExisting(dir, nil).Load(); !errors.Is(err, ErrNotPaired) {
+		t.Fatalf("Load err = %v, want ErrNotPaired", err)
+	}
+
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("OpenExisting created the directory")
+	}
+}

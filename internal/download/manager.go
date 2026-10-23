@@ -9,9 +9,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/getnabbed/agent/internal/engine"
 	"github.com/getnabbed/agent/internal/store"
@@ -168,11 +171,27 @@ func (m *Manager) stopAll() {
 
 // reconcile makes the set of runners match the database: it stops runners
 // whose download left the running states, starts runners up to the limit,
-// and removes work directories of cancelled downloads.
+// and removes work directories of cancelled downloads. Every query is
+// bounded, so the cost of a pass does not grow with history.
 func (m *Manager) reconcile(ctx context.Context) {
 	db := m.cfg.Store.DB()
 
-	cands, err := runnable(ctx, db)
+	m.mu.Lock()
+	running := make([]string, 0, len(m.running))
+	for id := range m.running {
+		running = append(running, id)
+	}
+	m.mu.Unlock()
+
+	// Stop runners whose download a command moved out of a running state.
+	for _, id := range running {
+		r, err := get(ctx, db, id)
+		if err != nil || !Running(r.State) {
+			m.stop(id)
+		}
+	}
+
+	cands, err := runnable(ctx, db, m.cfg.MaxConcurrent*2)
 	if err != nil {
 		if ctx.Err() == nil {
 			m.log.Error("list runnable downloads", "err", err)
@@ -181,18 +200,7 @@ func (m *Manager) reconcile(ctx context.Context) {
 		return
 	}
 
-	want := make(map[string]bool, len(cands))
-	for _, c := range cands {
-		want[c.ID] = true
-	}
-
 	m.mu.Lock()
-	for id, r := range m.running {
-		if !want[id] {
-			r.cancel()
-		}
-	}
-
 	for _, c := range cands {
 		if len(m.running) >= m.cfg.MaxConcurrent {
 			break
@@ -215,30 +223,59 @@ func (m *Manager) reconcile(ctx context.Context) {
 	}
 	m.mu.Unlock()
 
-	cancelled, err := idsInState(ctx, db, Cancelled)
+	cancelled, err := uncleanedCancelled(ctx, db, cleanupBatch)
 	if err != nil {
 		return
 	}
 
 	for _, id := range cancelled {
 		if !busy[id] {
-			m.cleanup(id)
+			m.cleanup(ctx, id)
 		}
 	}
 }
 
-func (m *Manager) cleanup(id string) {
-	dir := m.workDir(id)
-	if _, err := os.Stat(dir); err != nil {
-		return
-	}
+// cleanupBatch bounds how many cancelled downloads one pass cleans.
+const cleanupBatch = 32
 
-	if err := os.RemoveAll(dir); err != nil {
+func (m *Manager) stop(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if r, ok := m.running[id]; ok {
+		r.cancel()
+	}
+}
+
+// cleanup removes a cancelled download's work directory and marks it done.
+func (m *Manager) cleanup(ctx context.Context, id string) {
+	if err := os.RemoveAll(m.workDir(id)); err != nil {
 		m.log.Warn("remove cancelled download data", "download_id", id, "err", err)
 		return
 	}
 
+	if err := markDataRemoved(ctx, m.cfg.Store.DB(), id); err != nil {
+		m.log.Warn("record cancelled download cleanup", "download_id", id, "err", err)
+		return
+	}
+
 	m.log.Info("removed cancelled download data", "download_id", id)
+}
+
+// GC deletes finished rows that no longer matter: cancelled downloads
+// whose data is gone, after a week, and completed downloads after 30 days.
+// Failed downloads are kept for RetryDownload and count against the
+// unfinished-download limit until the cloud cancels them.
+func (m *Manager) GC(ctx context.Context) {
+	n, err := gcFinished(ctx, m.cfg.Store, time.Now().Add(-7*24*time.Hour), time.Now().Add(-30*24*time.Hour))
+	if err != nil {
+		m.log.Warn("garbage-collect downloads", "err", err)
+		return
+	}
+
+	if n > 0 {
+		m.log.Debug("garbage-collected finished downloads", "count", n)
+	}
 }
 
 // workDir derives a directory name from the download id without trusting
@@ -284,13 +321,14 @@ func (m *Manager) run(ctx context.Context, id string) {
 
 		log.Debug("stage", "state", r.State)
 
-		res, err := m.stage(ctx, r)
+		res, err := m.safeStage(ctx, r)
 		if err != nil {
 			if ctx.Err() != nil {
 				return // paused, cancelled or shutting down: state stays as the command left it
 			}
 
 			f := engine.AsFailure(err, defaultClass(r.State))
+			f.Detail = m.redact(r.ID, f.Detail)
 			log.Warn("download failed", "state", r.State, "class", f.Class, "retryable", f.Retryable, "detail", f.Detail)
 
 			m.update(ctx, func(tx *store.Tx) error {
@@ -414,4 +452,39 @@ func defaultClass(s State) pb.FailureClass {
 	}
 
 	return pb.FailureClass_FAILURE_CLASS_DISK
+}
+
+// safeStage runs a stage and turns a panic into a non-retryable failure of
+// this download, so one hostile input cannot take down the agent. Panics in
+// goroutines an engine starts itself cannot be caught here; engines must
+// validate input before handing it to libraries.
+func (m *Manager) safeStage(ctx context.Context, r *row) (res *engine.Result, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			m.log.Error("panic in download stage", "download_id", r.ID, "state", r.State,
+				"panic", fmt.Sprint(p), "stack", string(debug.Stack()))
+
+			res, err = nil, engine.Fail(defaultClass(r.State), false, "internal error while %s", stateName(r.State))
+		}
+	}()
+
+	return m.stage(ctx, r)
+}
+
+// maxDetailBytes caps failure text sent to the cloud.
+const maxDetailBytes = 512
+
+// redact removes host paths from failure text before it leaves the host.
+func (m *Manager) redact(id, detail string) string {
+	detail = strings.ReplaceAll(detail, m.workDir(id), "<download>")
+	detail = strings.ReplaceAll(detail, m.cfg.Dir, "<downloads>")
+
+	if len(detail) > maxDetailBytes {
+		detail = detail[:maxDetailBytes]
+		for !utf8.ValidString(detail) {
+			detail = detail[:len(detail)-1]
+		}
+	}
+
+	return detail
 }

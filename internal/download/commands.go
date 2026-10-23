@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/getnabbed/agent/internal/store"
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
@@ -18,13 +20,20 @@ var (
 	ErrUnknownDownload     = errors.New("unknown download")
 	ErrInvalidTransition   = errors.New("invalid transition")
 	ErrProtocolUnavailable = errors.New("protocol unavailable")
+	ErrLimitExceeded       = errors.New("limit exceeded")
 )
 
 // ErrAlreadyExists is returned by Start for a download id already known.
 // Start is idempotent, so the command still succeeds.
 var ErrAlreadyExists = errors.New("download already exists")
 
-const maxIDLen = 128
+const (
+	maxIDLen = 128
+	// maxSpecBytes bounds a stored download spec. Real specs are a few KB.
+	maxSpecBytes = 64 << 10
+	// maxUnfinished bounds downloads that are not DONE or CANCELLED.
+	maxUnfinished = 1000
+)
 
 // Start records a new download as QUEUED inside the command's transaction.
 // The runner picks it up after the transaction commits and Kick is called.
@@ -45,6 +54,15 @@ func (m *Manager) Start(ctx context.Context, tx *store.Tx, sd *pb.StartDownload)
 		return err
 	}
 
+	n, err := countUnfinished(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	if n >= maxUnfinished {
+		return fmt.Errorf("%w: %d unfinished downloads (limit %d); cancel some first", ErrLimitExceeded, n, maxUnfinished)
+	}
+
 	return insert(ctx, tx, d)
 }
 
@@ -55,6 +73,10 @@ func validate(d *pb.Download) error {
 
 	if d == nil {
 		return bad("download is missing")
+	}
+
+	if size := proto.Size(d); size > maxSpecBytes {
+		return bad("download spec is %d bytes, limit %d", size, maxSpecBytes)
 	}
 
 	if d.GetId() == "" || len(d.GetId()) > maxIDLen {

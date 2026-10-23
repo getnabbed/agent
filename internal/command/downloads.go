@@ -80,6 +80,8 @@ func downloadResult(err error) (*pb.CommandResult, error) {
 		return rejected(pb.CommandErrorCode_COMMAND_ERROR_CODE_INVALID_TRANSITION, err.Error()), nil
 	case errors.Is(err, download.ErrProtocolUnavailable):
 		return rejected(pb.CommandErrorCode_COMMAND_ERROR_CODE_PROTOCOL_UNAVAILABLE, err.Error()), nil
+	case errors.Is(err, download.ErrLimitExceeded):
+		return rejected(pb.CommandErrorCode_COMMAND_ERROR_CODE_LIMIT_EXCEEDED, err.Error()), nil
 	default:
 		return nil, err
 	}

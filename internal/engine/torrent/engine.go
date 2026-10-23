@@ -12,16 +12,20 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/anacrolix/torrent"
+	"github.com/anacrolix/torrent/iplist"
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/storage"
 
 	"github.com/getnabbed/agent/internal/engine"
+	"github.com/getnabbed/agent/internal/netguard"
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
 
@@ -35,6 +39,11 @@ type Config struct {
 	// PortForwarding enables UPnP/NAT-PMP mapping on the user's router.
 	// Off by default: changing router config is the host owner's call.
 	PortForwarding bool
+	// AllowLAN lets peers, trackers, web seeds and DHT nodes on the local
+	// network be contacted. Off by default: torrent metadata is untrusted
+	// and must not be able to make the agent reach LAN devices, the router
+	// or cloud metadata endpoints.
+	AllowLAN bool
 	// MetadataTimeout bounds waiting for a magnet's metadata.
 	MetadataTimeout time.Duration
 	// StallTimeout fails a download that makes no progress for this long.
@@ -110,6 +119,21 @@ func (e *Engine) clientLocked() (*torrent.Client, error) {
 	cfg.NoDefaultPortForwarding = !e.cfg.PortForwarding
 	cfg.NoDHT = e.cfg.noDHT
 	cfg.Slogger = e.log
+	// WebTorrent (WebRTC) is not needed for BitTorrent and adds a large attack
+	// surface; keep it off.
+	cfg.DisableWebtorrent = true
+
+	policy := netguard.Policy{AllowLAN: e.cfg.AllowLAN}
+	if !policy.AllowLAN {
+		// Peers in and out, and DHT nodes.
+		cfg.IPBlocklist = lanBlocklist{}
+	}
+
+	// Trackers and web seeds are checked at connect time, after DNS.
+	cfg.TrackerDialContext = policy.Dialer(nil)
+	cfg.TrackerListenPacket = policy.ListenPacket()
+	cfg.HTTPDialContext = policy.Dialer(nil)
+
 	// Every job brings its own storage; this default only guards against a
 	// torrent ever being added without one, and writes nowhere persistent.
 	cfg.DefaultStorage = storage.NewFileOpts(storage.NewFileClientOpts{
@@ -150,18 +174,9 @@ func (e *Engine) Download(ctx context.Context, job engine.Job, progress func(eng
 	spec.Storage = st
 	spec.PeerAddrs = append(spec.PeerAddrs, e.cfg.peerAddrs...)
 
-	e.mu.Lock()
-	cl, err := e.clientLocked()
+	t, err := e.add(spec)
 	if err != nil {
-		e.mu.Unlock()
-		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, true, "start torrent client: %v", err)
-	}
-
-	t, _, err := cl.AddTorrentSpec(spec)
-	e.mu.Unlock()
-
-	if err != nil {
-		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_PAYLOAD, false, "add torrent: %v", err)
+		return nil, err
 	}
 
 	defer t.Drop()
@@ -185,16 +200,58 @@ func (e *Engine) Download(ctx context.Context, job engine.Job, progress func(eng
 }
 
 func (e *Engine) spec(job engine.Job) (*torrent.TorrentSpec, error) {
+	var (
+		spec *torrent.TorrentSpec
+		err  error
+	)
+
 	if job.Magnet != "" {
-		return torrent.TorrentSpecFromMagnetUri(job.Magnet)
+		spec, err = torrent.TorrentSpecFromMagnetUri(job.Magnet)
+	} else {
+		var mi *metainfo.MetaInfo
+
+		mi, err = metainfo.LoadFromFile(job.PayloadPath)
+		if err != nil {
+			return nil, fmt.Errorf("read .torrent: %w", err)
+		}
+
+		spec, err = torrent.TorrentSpecFromMetaInfoErr(mi)
 	}
 
-	mi, err := metainfo.LoadFromFile(job.PayloadPath)
 	if err != nil {
-		return nil, fmt.Errorf("read .torrent: %w", err)
+		return nil, err
 	}
 
-	return torrent.TorrentSpecFromMetaInfoErr(mi)
+	// anacrolix panics on a zero v1 info hash; v2-only torrents have none.
+	if spec.InfoHash == (metainfo.Hash{}) {
+		return nil, errors.New("torrent has no BitTorrent v1 info hash")
+	}
+
+	return spec, nil
+}
+
+// add registers spec with the shared client. A torrent already running for
+// another job is refused: anacrolix would return the existing torrent, ignore
+// this job's storage, and let either job stop the other.
+func (e *Engine) add(spec *torrent.TorrentSpec) (*torrent.Torrent, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	cl, err := e.clientLocked()
+	if err != nil {
+		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, true, "start torrent client: %v", err)
+	}
+
+	if _, exists := cl.Torrent(spec.InfoHash); exists {
+		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, true, "the same torrent is already downloading for another download")
+	}
+
+	t, _, err := cl.AddTorrentSpec(spec)
+	if err != nil {
+		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_PAYLOAD, false, "add torrent: %v", err)
+	}
+
+	return t, nil
 }
 
 func (e *Engine) awaitInfo(ctx context.Context, t *torrent.Torrent) error {
@@ -281,3 +338,17 @@ func safeFiles(info *metainfo.Info) ([]engine.File, error) {
 
 	return out, nil
 }
+
+// lanBlocklist makes anacrolix refuse local-network peers and DHT nodes.
+type lanBlocklist struct{}
+
+func (lanBlocklist) Lookup(ip net.IP) (iplist.Range, bool) {
+	a, ok := netip.AddrFromSlice(ip)
+	if !ok || !netguard.IsLocal(a) {
+		return iplist.Range{}, false
+	}
+
+	return iplist.Range{First: ip, Last: ip, Description: "local network (torrent.allow_lan is off)"}, true
+}
+
+func (lanBlocklist) NumRanges() int { return len(netguard.Ranges()) }

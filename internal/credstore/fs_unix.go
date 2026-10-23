@@ -3,8 +3,12 @@
 package credstore
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
+	"syscall"
 )
 
 // PlatformProtector returns the default at-rest protector. On Unix there is
@@ -14,9 +18,18 @@ func PlatformProtector() Protector { return PlaintextProtector{} }
 
 func platformProtectorByName(string) Protector { return nil }
 
-func secureDir(dir string, log *slog.Logger) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+// secureDir creates dir owner-only, or checks an existing one. The
+// directory must be owned by the agent's own uid: anyone else who owns it
+// can replace the credentials whatever its mode says.
+func secureDir(dir string, _ *slog.Logger) error {
+	created := false
+
+	if _, err := os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+
+		created = true
 	}
 
 	fi, err := os.Stat(dir)
@@ -24,11 +37,27 @@ func secureDir(dir string, log *slog.Logger) error {
 		return err
 	}
 
-	if fi.Mode().Perm()&0o077 != 0 {
-		if err := os.Chmod(dir, 0o700); err != nil {
-			log.Warn("data dir is accessible by other users and could not be restricted",
-				"dir", dir, "mode", fi.Mode().Perm().String(), "err", err)
+	if !fi.IsDir() {
+		return fmt.Errorf("data dir %s is not a directory", dir)
+	}
+
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Geteuid() {
+		return fmt.Errorf("data dir %s is owned by uid %d, but the agent runs as uid %d; chown it or choose another directory",
+			dir, st.Uid, os.Geteuid())
+	}
+
+	if fi.Mode().Perm()&0o077 == 0 {
+		return nil
+	}
+
+	if !created {
+		if err := checkDedicated(dir); err != nil {
+			return err
 		}
+	}
+
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("data dir %s is accessible by other users and could not be restricted: %w", dir, err)
 	}
 
 	return nil
@@ -54,3 +83,5 @@ func syncDir(dir string) error {
 
 	return d.Sync()
 }
+
+func renameReplace(from, to string) error { return os.Rename(from, to) }

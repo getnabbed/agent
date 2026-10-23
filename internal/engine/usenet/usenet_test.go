@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,7 +31,12 @@ func TestSafeName(t *testing.T) {
 		"C:evil.exe":               "C_evil.exe",
 	}
 
-	cases["trailing"+". "] = "trailing" // Windows silently strips trailing dots and spaces
+	cases["trailing"+". "] = "trailing"   // Windows silently strips trailing dots and spaces
+	cases["x\u202egnp.exe"] = "x_gnp.exe" // bidi override cannot spoof the extension
+	cases["bad\xffutf8.bin"] = "bad_utf8.bin"
+	cases["COM\u00b9.txt"] = "file-1"
+	cases["CONIN$"] = "file-1"
+	cases["CON .txt"] = "file-1"
 
 	for in, want := range cases {
 		if got := SafeName(in, 0); got != want {
@@ -196,7 +203,7 @@ func TestDownloadAssemblesFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if !bytes.Equal(got, files[f.Path]) || f.Size != int64(len(files[f.Path])) {
+		if want := files[path.Base(f.Path)]; !bytes.Equal(got, want) || f.Size != int64(len(want)) {
 			t.Fatalf("%s: content or size mismatch (size %d)", f.Path, f.Size)
 		}
 	}
@@ -282,5 +289,154 @@ func TestParseProviderURL(t *testing.T) {
 
 	if strings.Contains(p.String(), "p@ss") {
 		t.Fatal("String leaks the password")
+	}
+}
+
+func TestLongNamesLeaveRoomForSuffix(t *testing.T) {
+	long := strings.Repeat("a", 300) + ".mkv"
+	used := map[string]bool{}
+
+	a := uniqueName(SafeName(long, 0), used)
+	b := uniqueName(SafeName(long, 1), used)
+
+	if a == b || len(b) > maxNameBytes || strings.HasSuffix(SafeName(strings.Repeat("b", 238)+". x", 0), ".") {
+		t.Fatalf("a=%d bytes b=%d bytes, distinct=%v", len(a), len(b), a != b)
+	}
+
+	if uniqueName("Café.txt", used) == "" || uniqueName("Café.txt", used) == "Café.txt" {
+		t.Fatal("NFC/NFD forms of the same name were not treated as a collision")
+	}
+}
+
+func TestNZBLimitsAreStreamed(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`<nzb><file subject="&quot;a&quot;"><segments>`)
+
+	for i := range maxNZBSegments + 1 {
+		fmt.Fprintf(&b, `<segment bytes="1" number="%d">m%d@x</segment>`, i+1, i)
+	}
+
+	b.WriteString(`</segments></file></nzb>`)
+
+	if _, err := ParseNZB(strings.NewReader(b.String())); err == nil || !strings.Contains(err.Error(), "segments") {
+		t.Fatalf("err = %v, want segment limit error", err)
+	}
+
+	if _, err := ParseNZB(strings.NewReader(`<nzb><file subject="x"><file></file></file></nzb>`)); err == nil {
+		t.Fatal("nested <file> accepted")
+	}
+}
+
+// M2: an NZB file named like the payload must not overwrite it.
+func TestPayloadCannotBeOverwritten(t *testing.T) {
+	s := newFakeNNTP(t, "", "")
+	job, _ := buildJob(t, s, map[string][]byte{"payload.nzb": randBytes(5000)}, 10_000, nil)
+
+	before, _ := os.ReadFile(job.PayloadPath)
+
+	res, err := newTestEngine(s.provider("", "", 1)).Download(context.Background(), job, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	after, _ := os.ReadFile(job.PayloadPath)
+	if !bytes.Equal(before, after) {
+		t.Fatal("payload was overwritten by an NZB file")
+	}
+
+	if res.Files[0].Path != "data/payload.nzb" {
+		t.Fatalf("output path = %q, want data/payload.nzb", res.Files[0].Path)
+	}
+}
+
+// M3: a part claiming an absurd file size is discarded, not written.
+func TestInflatedYEncSizeIsDiscarded(t *testing.T) {
+	s := newFakeNNTP(t, "", "")
+	dir := t.TempDir()
+
+	huge := int64(1) << 62
+	s.add("a@x", EncodeYEnc("a.bin", huge, huge-4, []byte("evil!"), 1, 1))
+
+	nzb := `<nzb><file subject="&quot;a.bin&quot;"><segments><segment bytes="100" number="1">a@x</segment></segments></file></nzb>`
+	if err := os.WriteFile(filepath.Join(dir, "payload.nzb"), []byte(nzb), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	job := engine.Job{ID: "h", Dir: dir, PayloadPath: filepath.Join(dir, "payload.nzb")}
+
+	res, err := newTestEngine(s.provider("", "", 1)).Download(context.Background(), job, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if res.MissingArticles != 1 || res.Files[0].Size != 0 {
+		t.Fatalf("result = %+v, want the article discarded and no size claimed", res)
+	}
+
+	if fi, err := os.Stat(filepath.Join(dir, "data", "a.bin")); err == nil && fi.Size() > 0 {
+		t.Fatalf("file grew to %d bytes", fi.Size())
+	}
+}
+
+func TestPartsMustAgreeOnFileSize(t *testing.T) {
+	s := newFakeNNTP(t, "", "")
+	dir := t.TempDir()
+
+	s.add("p1@x", EncodeYEnc("a.bin", 20, 1, []byte("0123456789"), 1, 2))
+	s.add("p2@x", EncodeYEnc("a.bin", 30, 11, []byte("abcdefghij"), 2, 2))
+
+	nzb := `<nzb><file subject="&quot;a.bin&quot;"><segments>` +
+		`<segment bytes="200" number="1">p1@x</segment><segment bytes="200" number="2">p2@x</segment>` +
+		`</segments></file></nzb>`
+	if err := os.WriteFile(filepath.Join(dir, "payload.nzb"), []byte(nzb), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := newTestEngine(s.provider("", "", 1)).Download(context.Background(), engine.Job{ID: "c", Dir: dir, PayloadPath: filepath.Join(dir, "payload.nzb")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if res.MissingArticles != 1 || res.Files[0].Size != 20 {
+		t.Fatalf("result = %+v, want the disagreeing part discarded and size 20", res)
+	}
+}
+
+func TestProviderURLSafety(t *testing.T) {
+	if _, err := ParseProviderURL("nntp://user:pw@news.example.com"); err == nil {
+		t.Fatal("plaintext credentials to a remote host were accepted")
+	}
+
+	if _, err := ParseProviderURL("nntp://user:pw@127.0.0.1:1119"); err != nil {
+		t.Fatalf("loopback plaintext refused: %v", err)
+	}
+
+	_, err := ParseProviderURL("nntps://user:S3cr%zz@news.example.com")
+	if err == nil || strings.Contains(err.Error(), "S3cr") {
+		t.Fatalf("err = %v, want an error that does not echo the password", err)
+	}
+}
+
+func TestOverlongServerLineIsRejected(t *testing.T) {
+	r, w := net.Pipe()
+	defer func() { _ = r.Close() }()
+
+	go func() {
+		_, _ = w.Write(bytes.Repeat([]byte("x"), maxLineBytes+10))
+		_ = w.Close()
+	}()
+
+	c := &lineLimitConn{Conn: r}
+	buf := make([]byte, 4096)
+
+	for {
+		_, err := c.Read(buf)
+		if errors.Is(err, errLineTooLong) {
+			return
+		}
+
+		if err != nil {
+			t.Fatalf("err = %v, want errLineTooLong", err)
+		}
 	}
 }

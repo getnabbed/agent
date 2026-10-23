@@ -93,7 +93,7 @@ func TestOtherAgentStateIsMovedAside(t *testing.T) {
 		t.Fatal("state from a previous agent identity was reused")
 	}
 
-	matches, _ := filepath.Glob(filepath.Join(dir, FileName+".agent-old.*.bak"))
+	matches, _ := filepath.Glob(filepath.Join(dir, FileName+".*.bak"))
 	if len(matches) != 1 {
 		t.Fatalf("expected the old database to be kept as a backup, found %v", matches)
 	}
@@ -279,5 +279,36 @@ func TestInspectIsReadOnly(t *testing.T) {
 
 	if _, err := db.ExecContext(ctx, "DELETE FROM outbox"); err == nil {
 		t.Fatal("read-only connection accepted a write")
+	}
+}
+
+func TestInspectCreatesNoFilesWhenIdle(t *testing.T) {
+	dir := t.TempDir()
+
+	s := openTest(t, dir, "agent-1")
+	_ = s.Close()
+
+	before, _ := os.ReadDir(dir)
+	if _, err := Inspect(ctx, dir); err != nil {
+		t.Fatal(err)
+	}
+
+	after, _ := os.ReadDir(dir)
+	if len(after) != len(before) {
+		t.Fatalf("Inspect created files: before=%d after=%d", len(before), len(after))
+	}
+}
+
+func TestMovedAsideNameDoesNotUseCloudID(t *testing.T) {
+	dir := t.TempDir()
+
+	s := openTest(t, dir, "../../weird/id")
+	_ = s.Close()
+
+	openTest(t, dir, "agent-new")
+
+	matches, _ := filepath.Glob(filepath.Join(dir, "*.bak"))
+	if len(matches) != 1 || strings.Contains(matches[0], "weird") {
+		t.Fatalf("backup = %v", matches)
 	}
 }

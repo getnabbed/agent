@@ -26,6 +26,10 @@ func ParseAPIURL(raw string) (*url.URL, error) {
 		return nil, err
 	}
 
+	// Canonical lower case: the host is signed into every refresh proof and
+	// must match how the server canonicalises it.
+	u.Host = strings.ToLower(u.Host)
+
 	return u, nil
 }
 
@@ -51,30 +55,56 @@ func ValidateGatewayURL(api *url.URL, raw string) (*url.URL, error) {
 		return nil, fmt.Errorf("gateway url scheme %q does not match api url scheme %q", gw.Scheme, api.Scheme)
 	}
 
-	a, g := api.Hostname(), gw.Hostname()
-	if net.ParseIP(a) != nil || net.ParseIP(g) != nil || a == "localhost" || g == "localhost" {
-		if !strings.EqualFold(a, g) {
-			return nil, fmt.Errorf("gateway host %q must equal api host %q", g, a)
-		}
-
-		return gw, nil
-	}
-
-	ad, err := publicsuffix.EffectiveTLDPlusOne(strings.ToLower(a))
-	if err != nil {
-		return nil, fmt.Errorf("api host %q: %w", a, err)
-	}
-
-	gd, err := publicsuffix.EffectiveTLDPlusOne(strings.ToLower(g))
-	if err != nil {
-		return nil, fmt.Errorf("gateway host %q: %w", g, err)
-	}
-
-	if ad != gd {
-		return nil, fmt.Errorf("gateway domain %q is not under api domain %q", gd, ad)
+	if err := sameSite(api, gw); err != nil {
+		return nil, fmt.Errorf("gateway: %w", err)
 	}
 
 	return gw, nil
+}
+
+// ValidateVerificationURI checks the device-flow link shown to the user:
+// it must be https (http only for loopback dev) on the API's own site, so
+// a compromised token endpoint cannot send the user to a phishing page.
+func ValidateVerificationURI(api *url.URL, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil {
+		return fmt.Errorf("invalid verification uri")
+	}
+
+	if err := checkScheme(u); err != nil {
+		return err
+	}
+
+	return sameSite(api, u)
+}
+
+// sameSite requires u to share api's registrable domain (eTLD+1), or to be
+// the same host for IPs and localhost.
+func sameSite(api, u *url.URL) error {
+	a, h := strings.ToLower(api.Hostname()), strings.ToLower(u.Hostname())
+	if net.ParseIP(a) != nil || net.ParseIP(h) != nil || a == "localhost" || h == "localhost" {
+		if a != h {
+			return fmt.Errorf("host %q must equal api host %q", h, a)
+		}
+
+		return nil
+	}
+
+	ad, err := publicsuffix.EffectiveTLDPlusOne(a)
+	if err != nil {
+		return fmt.Errorf("api host %q: %w", a, err)
+	}
+
+	hd, err := publicsuffix.EffectiveTLDPlusOne(h)
+	if err != nil {
+		return fmt.Errorf("host %q: %w", h, err)
+	}
+
+	if ad != hd {
+		return fmt.Errorf("domain %q is not under api domain %q", hd, ad)
+	}
+
+	return nil
 }
 
 func checkScheme(u *url.URL) error {

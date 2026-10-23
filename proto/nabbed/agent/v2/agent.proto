@@ -231,6 +231,8 @@ enum CommandErrorCode {
   COMMAND_ERROR_CODE_INTERNAL = 12;
   // The command is malformed: a required field is missing or invalid.
   COMMAND_ERROR_CODE_INVALID_ARGUMENT = 13;
+  // A local limit was reached, for example the number of unfinished downloads.
+  COMMAND_ERROR_CODE_LIMIT_EXCEEDED = 14;
 }
 
 // CommandResult answers exactly one Command. A redelivered command id gets

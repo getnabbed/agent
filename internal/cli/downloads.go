@@ -20,6 +20,7 @@ type runFlags struct {
 	downloadDir  string
 	maxDownloads int
 	torrentPort  int
+	allowLAN     bool
 	nntp         string
 }
 
@@ -27,6 +28,7 @@ func (f *runFlags) register(fs *flag.FlagSet, cfg *config.Config) {
 	fs.StringVar(&f.downloadDir, "download-dir", cfg.Downloads.Dir, "where downloads are written before import (env NABBED_DOWNLOAD_DIR)")
 	fs.IntVar(&f.maxDownloads, "max-downloads", cfg.Downloads.MaxConcurrent, "downloads that may run at once (env NABBED_MAX_DOWNLOADS)")
 	fs.IntVar(&f.torrentPort, "torrent-port", cfg.Torrent.Port, "BitTorrent listen port, 0 picks a free port (env NABBED_TORRENT_PORT)")
+	fs.BoolVar(&f.allowLAN, "torrent-allow-lan", cfg.Torrent.AllowLAN, "let torrents reach peers, trackers and web seeds on the local network (env NABBED_TORRENT_ALLOW_LAN)")
 	// No env default here: flag defaults are printed by -h, and this one holds a
 	// password. The env var is read in newDownloads instead.
 	fs.StringVar(&f.nntp, "nntp", "",
@@ -66,7 +68,10 @@ func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc 
 		e.log,
 	)
 
-	bt := torrent.New(torrent.Config{ListenPort: f.torrentPort, Log: e.log})
+	bt := torrent.New(torrent.Config{ListenPort: f.torrentPort, AllowLAN: f.allowLAN, Log: e.log})
+	if f.allowLAN {
+		e.log.Warn("torrents may contact devices on the local network (torrent.allow_lan is on)")
+	}
 
 	m, err := download.New(download.Config{
 		Store:         state,

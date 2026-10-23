@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/getnabbed/agent/internal/store"
@@ -35,5 +36,29 @@ func TestUnsupportedCommandIsRecordedAndReplayed(t *testing.T) {
 	fresh, last, _, err := s.HelloState(ctx)
 	if err != nil || fresh || last != "c1" {
 		t.Fatalf("HelloState: fresh=%v last=%q err=%v", fresh, last, err)
+	}
+}
+
+func TestInvalidCommandIDsAreRejectedUnrecorded(t *testing.T) {
+	ctx := context.Background()
+
+	s, err := store.Open(ctx, t.TempDir(), "agent-1", slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() { _ = s.Close() }()
+
+	a := New(Config{Store: s, Log: slog.New(slog.DiscardHandler)})
+
+	for _, id := range []string{"", strings.Repeat("x", 129), "has space", "tab\tid", "nul\x00"} {
+		res := a.HandleCommand(ctx, &pb.Command{Id: id, Kind: &pb.Command_RescanLibrary{RescanLibrary: &pb.RescanLibrary{}}})
+		if res.GetErrorCode() != pb.CommandErrorCode_COMMAND_ERROR_CODE_INVALID_ARGUMENT || len(res.GetCommandId()) > maxCommandIDBytes {
+			t.Errorf("id %q: result %v", id, res)
+		}
+	}
+
+	if fresh, _, _, _ := s.HelloState(ctx); !fresh {
+		t.Fatal("an invalid command was recorded")
 	}
 }

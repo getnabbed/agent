@@ -161,6 +161,12 @@ type HTTPFetcher struct {
 
 // Fetch implements PayloadFetcher.
 func (h *HTTPFetcher) Fetch(ctx context.Context, payloadID string, w io.Writer) error {
+	client := *h.Client
+	client.CheckRedirect = payloadRedirectPolicy
+	// Payloads can be up to 64 MB on a slow link: allow more than the API's
+	// 30s, but never wait forever on a stalled server.
+	client.Timeout = 15 * time.Minute
+
 	for attempt := 0; ; attempt++ {
 		tok, err := h.Tokens.Token(ctx)
 		if err != nil {
@@ -176,8 +182,12 @@ func (h *HTTPFetcher) Fetch(ctx context.Context, payloadID string, w io.Writer) 
 
 		req.Header.Set("Authorization", "Bearer "+tok.Raw)
 
-		resp, err := h.Client.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
+			if errors.Is(err, errRedirectRefused) {
+				return engine.Fail(pb.FailureClass_FAILURE_CLASS_PAYLOAD, false, "%v", errRedirectRefused)
+			}
+
 			return err
 		}
 
@@ -207,4 +217,28 @@ func (h *HTTPFetcher) Fetch(ctx context.Context, payloadID string, w io.Writer) 
 			return fmt.Errorf("payload fetch: HTTP %d", resp.StatusCode)
 		}
 	}
+}
+
+// errRedirectRefused marks a redirect the policy refused; retrying cannot help.
+var errRedirectRefused = errors.New("payload fetch: refused redirect")
+
+// payloadRedirectPolicy allows a payload to be served from elsewhere (for
+// example a presigned object-store URL) but never downgrades to plain
+// http and never sends the agent's token to another host. Integrity does
+// not depend on the server: the sha256 is checked locally.
+func payloadRedirectPolicy(req *http.Request, via []*http.Request) error {
+	if len(via) >= 3 {
+		return fmt.Errorf("%w: too many redirects", errRedirectRefused)
+	}
+
+	first := via[0].URL
+	if req.URL.Scheme != "https" && (req.URL.Scheme != first.Scheme || req.URL.Host != first.Host) {
+		return fmt.Errorf("%w to %s", errRedirectRefused, req.URL.Scheme)
+	}
+
+	if req.URL.Host != first.Host {
+		req.Header.Del("Authorization")
+	}
+
+	return nil
 }

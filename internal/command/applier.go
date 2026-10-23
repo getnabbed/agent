@@ -64,6 +64,17 @@ func New(cfg Config) *Applier {
 // HandleCommand implements link.Handler. The state change and the recorded
 // result commit together; a redelivered command gets the stored result.
 func (a *Applier) HandleCommand(ctx context.Context, cmd *pb.Command) *pb.CommandResult {
+	if !validCommandID(cmd.GetId()) {
+		// Not recorded: an oversized id would be echoed in every result and
+		// become last_command_id in every Hello, wedging the stream.
+		a.log.Error("rejecting command with an invalid id", "id_bytes", len(cmd.GetId()))
+
+		res := rejected(pb.CommandErrorCode_COMMAND_ERROR_CODE_INVALID_ARGUMENT, "command id must be 1-128 printable ASCII bytes")
+		res.CommandId = truncate(cmd.GetId(), maxCommandIDBytes)
+
+		return res
+	}
+
 	res, replayed, err := a.store.ApplyCommand(ctx, cmd, a.apply)
 	if err != nil {
 		// Nothing was recorded, so a redelivery will try again.
@@ -115,4 +126,29 @@ func (a *Applier) Prune(ctx context.Context) {
 	if n > 0 {
 		a.log.Debug("pruned command results", "count", n)
 	}
+}
+
+// maxCommandIDBytes bounds command ids; real ids are UUIDs.
+const maxCommandIDBytes = 128
+
+func validCommandID(id string) bool {
+	if id == "" || len(id) > maxCommandIDBytes {
+		return false
+	}
+
+	for i := 0; i < len(id); i++ {
+		if id[i] < 0x21 || id[i] > 0x7e {
+			return false
+		}
+	}
+
+	return true
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+
+	return s
 }

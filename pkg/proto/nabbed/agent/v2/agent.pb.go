@@ -167,6 +167,8 @@ const (
 	CommandErrorCode_COMMAND_ERROR_CODE_INTERNAL                CommandErrorCode = 12
 	// The command is malformed: a required field is missing or invalid.
 	CommandErrorCode_COMMAND_ERROR_CODE_INVALID_ARGUMENT CommandErrorCode = 13
+	// A local limit was reached, for example the number of unfinished downloads.
+	CommandErrorCode_COMMAND_ERROR_CODE_LIMIT_EXCEEDED CommandErrorCode = 14
 )
 
 // Enum value maps for CommandErrorCode.
@@ -186,6 +188,7 @@ var (
 		11: "COMMAND_ERROR_CODE_DEADLINE_EXCEEDED",
 		12: "COMMAND_ERROR_CODE_INTERNAL",
 		13: "COMMAND_ERROR_CODE_INVALID_ARGUMENT",
+		14: "COMMAND_ERROR_CODE_LIMIT_EXCEEDED",
 	}
 	CommandErrorCode_value = map[string]int32{
 		"COMMAND_ERROR_CODE_UNSPECIFIED":             0,
@@ -202,6 +205,7 @@ var (
 		"COMMAND_ERROR_CODE_DEADLINE_EXCEEDED":       11,
 		"COMMAND_ERROR_CODE_INTERNAL":                12,
 		"COMMAND_ERROR_CODE_INVALID_ARGUMENT":        13,
+		"COMMAND_ERROR_CODE_LIMIT_EXCEEDED":          14,
 	}
 )
 
@@ -4663,7 +4667,7 @@ const file_nabbed_agent_v2_agent_proto_rawDesc = "" +
 	"\x1eCOMMAND_OUTCOME_APPLIED_CAPPED\x10\x02\x12$\n" +
 	" COMMAND_OUTCOME_PENDING_APPROVAL\x10\x03\x12\x1c\n" +
 	"\x18COMMAND_OUTCOME_REJECTED\x10\x04\x12\x1a\n" +
-	"\x16COMMAND_OUTCOME_FAILED\x10\x05*\xc4\x04\n" +
+	"\x16COMMAND_OUTCOME_FAILED\x10\x05*\xeb\x04\n" +
 	"\x10CommandErrorCode\x12\"\n" +
 	"\x1eCOMMAND_ERROR_CODE_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dCOMMAND_ERROR_CODE_UNKNOWN_ID\x10\x01\x12)\n" +
@@ -4679,7 +4683,8 @@ const file_nabbed_agent_v2_agent_proto_rawDesc = "" +
 	"\x12(\n" +
 	"$COMMAND_ERROR_CODE_DEADLINE_EXCEEDED\x10\v\x12\x1f\n" +
 	"\x1bCOMMAND_ERROR_CODE_INTERNAL\x10\f\x12'\n" +
-	"#COMMAND_ERROR_CODE_INVALID_ARGUMENT\x10\r*Y\n" +
+	"#COMMAND_ERROR_CODE_INVALID_ARGUMENT\x10\r\x12%\n" +
+	"!COMMAND_ERROR_CODE_LIMIT_EXCEEDED\x10\x0e*Y\n" +
 	"\vLibraryKind\x12\x1c\n" +
 	"\x18LIBRARY_KIND_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13LIBRARY_KIND_MOVIES\x10\x01\x12\x13\n" +

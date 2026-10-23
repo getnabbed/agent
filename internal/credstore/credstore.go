@@ -9,7 +9,8 @@
 // Protection layers, outermost first:
 //
 //  1. The data directory is owner-only (0700 on Unix, a protected DACL for
-//     SYSTEM, Administrators and the owner on Windows).
+//     SYSTEM, Administrators and the agent's own account on Windows), must
+//     be owned by the agent's account, and must be dedicated to the agent.
 //  2. The file is written 0600 via temp file + fsync + rename.
 //  3. The payload is wrapped by a platform Protector where one exists without
 //     user interaction (DPAPI on Windows). Elsewhere the file is plaintext
@@ -241,7 +242,7 @@ func writeFileAtomic(path string, data []byte) (err error) {
 		return err
 	}
 
-	if err = os.Rename(tmp, path); err != nil {
+	if err = renameReplace(tmp, path); err != nil {
 		return err
 	}
 

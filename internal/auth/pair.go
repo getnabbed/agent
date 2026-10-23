@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
+	"regexp"
 	"time"
 
 	"github.com/getnabbed/agent/internal/identity"
@@ -45,6 +47,10 @@ func Pair(ctx context.Context, c *Client, id *identity.Identity, o PairOptions) 
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start pairing: %w", err)
+	}
+
+	if err := checkAuthorizeResponse(c.base, ar); err != nil {
+		return nil, fmt.Errorf("refusing pairing response: %w", err)
 	}
 
 	if o.Prompt != nil {
@@ -97,4 +103,27 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	case <-t.C:
 		return nil
 	}
+}
+
+var userCodePattern = regexp.MustCompile(`^[A-Za-z0-9-]{4,32}$`)
+
+// checkAuthorizeResponse validates what the user will be shown: the code
+// must be plain characters (no terminal escapes) and the links must point at
+// the API's own site.
+func checkAuthorizeResponse(api *url.URL, ar *AuthorizeResponse) error {
+	if !userCodePattern.MatchString(ar.UserCode) {
+		return errors.New("user_code must be 4-32 letters, digits or hyphens")
+	}
+
+	if err := ValidateVerificationURI(api, ar.VerificationURI); err != nil {
+		return fmt.Errorf("verification_uri: %w", err)
+	}
+
+	if ar.VerificationURIComplete != "" {
+		if err := ValidateVerificationURI(api, ar.VerificationURIComplete); err != nil {
+			return fmt.Errorf("verification_uri_complete: %w", err)
+		}
+	}
+
+	return nil
 }

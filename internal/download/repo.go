@@ -152,12 +152,13 @@ type candidate struct {
 // runnable lists downloads in running states: interrupted ones (past
 // QUEUED) first so a restart finishes work before starting new work, then
 // by priority and age.
-func runnable(ctx context.Context, db *sql.DB) ([]candidate, error) {
+func runnable(ctx context.Context, db *sql.DB, limit int) ([]candidate, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, state FROM downloads
 		WHERE state IN (?, ?, ?, ?, ?)
-		ORDER BY state = ? ASC, priority DESC, created_at ASC`,
-		int32(Queued), int32(Fetching), int32(Downloading), int32(Assembling), int32(Importing), int32(Queued))
+		ORDER BY state = ? ASC, priority DESC, created_at ASC
+		LIMIT ?`,
+		int32(Queued), int32(Fetching), int32(Downloading), int32(Assembling), int32(Importing), int32(Queued), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -183,8 +184,9 @@ func runnable(ctx context.Context, db *sql.DB) ([]candidate, error) {
 	return out, rows.Err()
 }
 
-func idsInState(ctx context.Context, db *sql.DB, s State) ([]string, error) {
-	rows, err := db.QueryContext(ctx, "SELECT id FROM downloads WHERE state = ?", int32(s))
+func uncleanedCancelled(ctx context.Context, db *sql.DB, limit int) ([]string, error) {
+	rows, err := db.QueryContext(ctx,
+		"SELECT id FROM downloads WHERE state = ? AND data_removed = 0 LIMIT ?", int32(Cancelled), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -203,4 +205,41 @@ func idsInState(ctx context.Context, db *sql.DB, s State) ([]string, error) {
 	}
 
 	return out, rows.Err()
+}
+
+func markDataRemoved(ctx context.Context, db *sql.DB, id string) error {
+	_, err := db.ExecContext(ctx, "UPDATE downloads SET data_removed = 1 WHERE id = ? AND state = ?", id, int32(Cancelled))
+
+	return err
+}
+
+func gcFinished(ctx context.Context, s *store.Store, cancelledBefore, doneBefore time.Time) (int64, error) {
+	var n int64
+
+	err := s.Update(ctx, func(tx *store.Tx) error {
+		r, err := tx.ExecContext(ctx, `
+			DELETE FROM downloads
+			WHERE (state = ? AND data_removed = 1 AND updated_at < ?)
+			   OR (state = ? AND updated_at < ?)`,
+			int32(Cancelled), cancelledBefore.UnixMilli(), int32(Done), doneBefore.UnixMilli())
+		if err != nil {
+			return err
+		}
+
+		n, err = r.RowsAffected()
+
+		return err
+	})
+
+	return n, err
+}
+
+// countUnfinished counts downloads that are not DONE or CANCELLED.
+func countUnfinished(ctx context.Context, q querier) (int, error) {
+	var n int
+
+	err := q.QueryRowContext(ctx, "SELECT count(*) FROM downloads WHERE state NOT IN (?, ?)",
+		int32(Done), int32(Cancelled)).Scan(&n)
+
+	return n, err
 }

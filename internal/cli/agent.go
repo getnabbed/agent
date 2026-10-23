@@ -63,6 +63,10 @@ func openLocked(e *env) (*credstore.Store, *lock.Lock, error) {
 	return store, l, nil
 }
 
+// httpClient is the client for cloud-api. It never follows redirects: a
+// redirect would re-send refresh tokens, proofs and device codes to
+// whatever host it names, possibly over plain http. Payload downloads set
+// their own, stricter policy (see download.HTTPFetcher).
 func httpClient(caFile string) (*http.Client, error) {
 	cfg, err := tlsconf.New(tlsconf.Options{CAFile: caFile})
 	if err != nil {
@@ -72,7 +76,11 @@ func httpClient(caFile string) (*http.Client, error) {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig = cfg
 
-	return &http.Client{Timeout: 30 * time.Second, Transport: tr}, nil
+	return &http.Client{
+		Timeout:       30 * time.Second,
+		Transport:     tr,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}, nil
 }
 
 // pair runs the device flow and persists the result. It returns the
@@ -300,6 +308,12 @@ func runRun(ctx context.Context, e *env, args []string) int {
 		_ = downloads.Run(runCtx)
 	}()
 
+	// Housekeeping, so a long-running agent's database stays bounded.
+	go maintain(runCtx, time.Hour, func(ctx context.Context) {
+		applier.Prune(ctx)
+		downloads.GC(ctx)
+	})
+
 	err = lc.Run(runCtx)
 	stop()
 	<-dlDone
@@ -324,11 +338,8 @@ func runStatus(ctx context.Context, e *env, args []string) int {
 		return ExitUsage
 	}
 
-	store, err := credstore.Open(e.dataDir, e.log)
-	if err != nil {
-		e.log.Error("cannot open data dir", "err", err)
-		return ExitError
-	}
+	// Read-only: inspecting a data dir must never create or re-permission it.
+	store := credstore.OpenExisting(e.dataDir, e.log)
 
 	creds, err := store.Load()
 	if errors.Is(err, credstore.ErrNotPaired) {
@@ -379,4 +390,19 @@ func runStatus(ctx context.Context, e *env, args []string) int {
 	}
 
 	return ExitOK
+}
+
+// maintain runs fn every interval until ctx ends.
+func maintain(ctx context.Context, interval time.Duration, fn func(context.Context)) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			fn(ctx)
+		}
+	}
 }

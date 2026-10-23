@@ -55,6 +55,9 @@ type Config struct {
 
 	Torrent struct {
 		Port int `yaml:"port"`
+		// AllowLAN lets torrents reach peers, trackers and web seeds on the
+		// local network. Off by default: torrent metadata is untrusted.
+		AllowLAN bool `yaml:"allow_lan"`
 	} `yaml:"torrent"`
 
 	Usenet struct {
@@ -95,6 +98,8 @@ func Default() *Config {
 type Source struct {
 	Path   string
 	Loaded bool
+	// Warnings are problems worth logging that do not stop the agent.
+	Warnings []string
 }
 
 // Load returns defaults overlaid with the config file and the environment.
@@ -120,6 +125,10 @@ func Load(path string, getenv func(string) string) (*Config, Source, error) {
 		}
 	} else {
 		src.Loaded = true
+
+		if c.Usenet.Provider != "" && worldReadable(path) {
+			src.Warnings = append(src.Warnings, path+" holds a usenet password but other users can read it; chmod 600 it, or use NABBED_NNTP_FILE")
+		}
 	}
 
 	if err := c.applyEnv(getenv); err != nil {
@@ -176,6 +185,19 @@ func num(name string, dst func(*Config) *int) func(*Config, string) error {
 	}
 }
 
+func boolean(name string, dst func(*Config) *bool) func(*Config, string) error {
+	return func(c *Config, v string) error {
+		b, err := strconv.ParseBool(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("%s: %q is not true or false", name, v)
+		}
+
+		*dst(c) = b
+
+		return nil
+	}
+}
+
 // Env lists every environment variable the agent reads, in documentation
 // order.
 var Env = []envVar{
@@ -188,6 +210,7 @@ var Env = []envVar{
 	{"NABBED_DOWNLOAD_DIR", str(func(c *Config) *string { return &c.Downloads.Dir })},
 	{"NABBED_MAX_DOWNLOADS", num("NABBED_MAX_DOWNLOADS", func(c *Config) *int { return &c.Downloads.MaxConcurrent })},
 	{"NABBED_TORRENT_PORT", num("NABBED_TORRENT_PORT", func(c *Config) *int { return &c.Torrent.Port })},
+	{"NABBED_TORRENT_ALLOW_LAN", boolean("NABBED_TORRENT_ALLOW_LAN", func(c *Config) *bool { return &c.Torrent.AllowLAN })},
 	{"NABBED_NNTP", func(c *Config, v string) error { c.Usenet.Provider = Secret(v); return nil }},
 }
 

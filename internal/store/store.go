@@ -16,8 +16,10 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -90,7 +92,10 @@ func Open(ctx context.Context, dir, agentID string, log *slog.Logger) (*Store, e
 	// Belongs to another identity: set it aside and start over.
 	_ = s.Close()
 
-	aside := fmt.Sprintf("%s.%s.%d.bak", path, owner, time.Now().Unix())
+	// The owner id came from the cloud; hash it rather than trust it in a
+	// file name.
+	sum := sha256.Sum256([]byte(owner))
+	aside := fmt.Sprintf("%s.%s.%d.bak", path, hex.EncodeToString(sum[:8]), time.Now().Unix())
 	if err := os.Rename(path, aside); err != nil {
 		return nil, fmt.Errorf("store: move aside state of previous agent %s: %w", owner, err)
 	}
@@ -311,6 +316,13 @@ func Inspect(ctx context.Context, dir string) (*Summary, error) {
 
 	q := url.Values{}
 	q.Set("mode", "ro")
+	// With no WAL present the daemon is not running: open immutable so SQLite
+	// creates no -wal or -shm files, which, made by another user such as root,
+	// would lock the daemon out of its own database.
+	if _, err := os.Stat(path + "-wal"); errors.Is(err, fs.ErrNotExist) {
+		q.Set("immutable", "1")
+	}
+
 	q.Add("_pragma", "busy_timeout(5000)")
 
 	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?"+q.Encode())

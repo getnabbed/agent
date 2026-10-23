@@ -117,6 +117,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	e := &env{stdout: stdout, stderr: stderr, log: logger, cfg: cfg, dataDir: cfg.DataDir}
 	e.log.Debug("configuration", "file", src.Path, "file_loaded", src.Loaded)
 
+	for _, w := range src.Warnings {
+		e.log.Warn(w)
+	}
+
 	rest := fs.Args()
 	if len(rest) == 0 {
 		printUsage(stderr)
@@ -136,7 +140,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return ExitUsage
 	}
 
-	e.log.Debug("running command", "command", name, "args", rest[1:])
+	// Never log the arguments themselves: flags such as --nntp carry secrets.
+	e.log.Debug("running command", "command", name, "arg_count", len(rest)-1)
 
 	return cmd.run(ctx, e, rest[1:])
 }

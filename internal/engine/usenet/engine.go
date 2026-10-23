@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,12 +82,72 @@ func (e *Engine) Download(ctx context.Context, job engine.Job, progress func(eng
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "read checkpoint: %v", err)
 	}
 
+	// Article data goes in its own directory so that no NZB file name can
+	// collide with the payload or the checkpoint.
+	if err := root.MkdirAll(dataDir, 0o750); err != nil {
+		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "create data dir: %v", err)
+	}
+
+	data, err := root.OpenRoot(dataDir)
+	if err != nil {
+		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "open data dir: %v", err)
+	}
+
+	defer func() { _ = data.Close() }()
+
 	d := &download{
-		e: e, root: root, nzb: nzb, provider: provider, ckpt: ckpt,
+		e: e, root: root, data: data, nzb: nzb, provider: provider, ckpt: ckpt,
 		files: map[int]*os.File{},
+		sizes: map[int]int64{},
+	}
+
+	for i := range nzb.Files {
+		if s := ckpt.size(i); s > 0 {
+			d.sizes[i] = s
+		}
 	}
 
 	return d.run(ctx, progress)
+}
+
+// dataDir holds downloaded files inside the work directory.
+const dataDir = "data"
+
+// absMaxFileSize bounds any single file when the NZB gives no sizes.
+const absMaxFileSize = 1 << 40
+
+// errBadPart marks an article whose yEnc headers contradict the NZB or
+// other parts of the same file. Refetching cannot fix it.
+var errBadPart = errors.New("yenc part inconsistent with its file")
+
+// maxFileSize bounds file i's decoded size. Encoded article bytes always
+// exceed decoded bytes, so the NZB total plus slack is a safe ceiling.
+func (d *download) maxFileSize(i int) int64 {
+	n := d.nzb.Files[i].Bytes()
+	if n <= 0 {
+		return absMaxFileSize
+	}
+
+	return min(n+n/8+1<<20, absMaxFileSize)
+}
+
+// claimSize records file i's size from its first decoded part and checks
+// every later part against it.
+func (d *download) claimSize(i int, size int64) error {
+	if size > d.maxFileSize(i) {
+		return fmt.Errorf("%w: declared size %d exceeds %d", errBadPart, size, d.maxFileSize(i))
+	}
+
+	d.sizesMu.Lock()
+	defer d.sizesMu.Unlock()
+
+	if have, ok := d.sizes[i]; ok && have != size {
+		return fmt.Errorf("%w: declared size %d, earlier parts said %d", errBadPart, size, have)
+	}
+
+	d.sizes[i] = size
+
+	return nil
 }
 
 func (e *Engine) readNZB(root *os.Root, payloadPath string) (*NZB, error) {
@@ -103,13 +164,17 @@ func (e *Engine) readNZB(root *os.Root, payloadPath string) (*NZB, error) {
 // download is one run of one job.
 type download struct {
 	e        *Engine
-	root     *os.Root
+	root     *os.Root // work dir: payload and checkpoint
+	data     *os.Root // work dir/data: downloaded files only
 	nzb      *NZB
 	provider Provider
 	ckpt     *checkpoint
 
 	filesMu sync.Mutex
 	files   map[int]*os.File
+
+	sizesMu sync.Mutex
+	sizes   map[int]int64
 
 	doneBytes atomic.Int64
 	missing   atomic.Int64
@@ -204,7 +269,7 @@ feed:
 			}
 		}
 
-		result.Files = append(result.Files, engine.File{Path: name, Size: size})
+		result.Files = append(result.Files, engine.File{Path: path.Join(dataDir, name), Size: size})
 	}
 
 	result.MissingArticles = int(d.missing.Load())
@@ -273,7 +338,11 @@ func (d *download) worker(ctx context.Context, fatal context.CancelCauseFunc, it
 				break
 			}
 
-			if errors.Is(err, ErrArticleNotFound) {
+			if errors.Is(err, ErrArticleNotFound) || errors.Is(err, errBadPart) {
+				if errors.Is(err, errBadPart) {
+					d.e.log.Warn("discarding article", "message_id", it.segment.MessageID, "err", err)
+				}
+
 				d.missing.Add(1)
 				break
 			}
@@ -300,7 +369,7 @@ func (d *download) worker(ctx context.Context, fatal context.CancelCauseFunc, it
 // isConnErr reports whether err leaves the connection in an unknown state.
 // A bad checksum or a missing article does not.
 func isConnErr(err error) bool {
-	return err != nil && !errors.Is(err, ErrYEncCRC) && !errors.Is(err, ErrArticleNotFound)
+	return err != nil && !errors.Is(err, ErrYEncCRC) && !errors.Is(err, ErrArticleNotFound) && !errors.Is(err, errBadPart)
 }
 
 // diskError marks a local write failure, which no retry can fix.
@@ -319,6 +388,10 @@ func (d *download) fetch(c *conn, it workItem) (bool, error) {
 
 	part, err := DecodeYEnc(bytesReader(body))
 	if err != nil {
+		return false, err
+	}
+
+	if err := d.claimSize(it.file, part.FileSize); err != nil {
 		return false, err
 	}
 
@@ -345,7 +418,7 @@ func (d *download) file(i int) (*os.File, error) {
 		return f, nil
 	}
 
-	f, err := d.root.OpenFile(d.nzb.Files[i].Name, os.O_RDWR|os.O_CREATE, 0o644)
+	f, err := d.data.OpenFile(d.nzb.Files[i].Name, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, err
 	}

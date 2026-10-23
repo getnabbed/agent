@@ -13,14 +13,27 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
-// Limits on untrusted NZB input.
+// Limits on untrusted NZB input. They are enforced while streaming, so a
+// hostile document is rejected before it is held in memory. Real releases
+// stay far below them: a 100 GB release in 750 KB articles is ~140k
+// segments.
 const (
-	maxNZBBytes    = 64 << 20
-	maxNZBFiles    = 10_000
-	maxNZBSegments = 2_000_000
-	maxNameBytes   = 255
+	maxNZBBytes      = 64 << 20
+	maxNZBFiles      = 10_000
+	maxNZBSegments   = 500_000
+	maxNameBytes     = 255
+	maxSubjectBytes  = 4096
+	maxTextBytes     = 1024 // message-id, group or meta value
+	maxGroupsPerFile = 64
+	maxMetaEntries   = 64
+	// nameRoom is kept free when truncating names so that a " (NNNN)"
+	// de-duplication suffix still fits in maxNameBytes.
+	nameRoom = 16
 )
 
 // NZB is a parsed NZB document.
@@ -55,78 +68,180 @@ func (f *NZBFile) Bytes() int64 {
 	return n
 }
 
-type xmlNZB struct {
-	Head struct {
-		Meta []struct {
-			Type  string `xml:"type,attr"`
-			Value string `xml:",chardata"`
-		} `xml:"meta"`
-	} `xml:"head"`
-	Files []struct {
-		Subject  string   `xml:"subject,attr"`
-		Groups   []string `xml:"groups>group"`
-		Segments []struct {
-			Bytes  int64  `xml:"bytes,attr"`
-			Number int    `xml:"number,attr"`
-			ID     string `xml:",chardata"`
-		} `xml:"segments>segment"`
-	} `xml:"file"`
-}
-
-// ParseNZB reads an NZB, validating structure and sizes and assigning each
-// file a unique, safe name.
+// ParseNZB reads an NZB, validating structure and sizes as it streams and
+// assigning each file a unique, safe name.
 func ParseNZB(r io.Reader) (*NZB, error) {
 	dec := xml.NewDecoder(io.LimitReader(r, maxNZBBytes))
 	dec.Strict = false
 	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil }
 
-	var raw xmlNZB
-	if err := dec.Decode(&raw); err != nil {
-		return nil, fmt.Errorf("parse nzb: %w", err)
+	p := parser{out: &NZB{Meta: map[string]string{}}, used: map[string]bool{}}
+
+	for {
+		tok, err := dec.Token()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("parse nzb: %w", err)
+		}
+
+		if err := p.token(tok); err != nil {
+			return nil, err
+		}
 	}
 
-	if len(raw.Files) == 0 {
+	if len(p.out.Files) == 0 {
 		return nil, errors.New("nzb has no files")
 	}
 
-	if len(raw.Files) > maxNZBFiles {
-		return nil, fmt.Errorf("nzb has %d files, limit %d", len(raw.Files), maxNZBFiles)
-	}
+	return p.out, nil
+}
 
-	out := &NZB{Meta: map[string]string{}}
-	for _, m := range raw.Head.Meta {
-		out.Meta[strings.ToLower(m.Type)] = strings.TrimSpace(m.Value)
-	}
+// parser holds streaming state. Only one file, segment and text value are
+// in progress at a time.
+type parser struct {
+	out  *NZB
+	used map[string]bool
 
-	used := map[string]bool{}
-	total := 0
+	file     *NZBFile
+	seen     map[int]bool
+	segments int
 
-	for i, f := range raw.Files {
-		seen := map[int]bool{}
-		file := NZBFile{Subject: f.Subject, Groups: f.Groups}
+	// Text collection for the element being read.
+	collecting bool
+	overflow   bool
+	text       strings.Builder
 
-		for _, s := range f.Segments {
-			id := strings.TrimSpace(s.ID)
-			if id == "" || s.Number <= 0 || seen[s.Number] || strings.ContainsAny(id, "\r\n<> ") {
-				continue // malformed or duplicate segment: skip, counts as missing
+	segNumber int
+	segBytes  int64
+	metaType  string
+}
+
+func (p *parser) token(tok xml.Token) error {
+	switch t := tok.(type) {
+	case xml.StartElement:
+		return p.start(t)
+	case xml.CharData:
+		if p.collecting && !p.overflow {
+			if p.text.Len()+len(t) > maxTextBytes {
+				p.overflow = true
+			} else {
+				p.text.Write(t)
 			}
-
-			seen[s.Number] = true
-			file.Segments = append(file.Segments, Segment{Number: s.Number, Bytes: max(s.Bytes, 0), MessageID: id})
 		}
-
-		total += len(file.Segments)
-		if total > maxNZBSegments {
-			return nil, fmt.Errorf("nzb has more than %d segments", maxNZBSegments)
-		}
-
-		sort.Slice(file.Segments, func(a, b int) bool { return file.Segments[a].Number < file.Segments[b].Number })
-
-		file.Name = uniqueName(SafeName(nameFromSubject(f.Subject), i), used)
-		out.Files = append(out.Files, file)
+	case xml.EndElement:
+		p.end(t.Name.Local)
 	}
 
-	return out, nil
+	return nil
+}
+
+func (p *parser) collect() {
+	p.collecting, p.overflow = true, false
+	p.text.Reset()
+}
+
+func (p *parser) start(t xml.StartElement) error {
+	switch t.Name.Local {
+	case "file":
+		if p.file != nil {
+			return errors.New("nzb: nested <file>")
+		}
+
+		if len(p.out.Files) >= maxNZBFiles {
+			return fmt.Errorf("nzb has more than %d files", maxNZBFiles)
+		}
+
+		subject := attr(t, "subject")
+		if len(subject) > maxSubjectBytes {
+			subject = subject[:maxSubjectBytes]
+		}
+
+		p.file = &NZBFile{Subject: subject}
+		p.seen = map[int]bool{}
+	case "segment":
+		if p.file == nil {
+			return nil
+		}
+
+		if p.segments >= maxNZBSegments {
+			return fmt.Errorf("nzb has more than %d segments", maxNZBSegments)
+		}
+
+		p.segNumber, _ = strconv.Atoi(attr(t, "number"))
+		p.segBytes, _ = strconv.ParseInt(attr(t, "bytes"), 10, 64)
+		p.collect()
+	case "group":
+		if p.file != nil {
+			p.collect()
+		}
+	case "meta":
+		p.metaType = strings.ToLower(attr(t, "type"))
+		p.collect()
+	}
+
+	return nil
+}
+
+func (p *parser) end(name string) {
+	text := strings.TrimSpace(p.text.String())
+	ok := p.collecting && !p.overflow
+
+	switch name {
+	case "segment":
+		if p.file != nil && ok {
+			p.addSegment(text)
+		}
+	case "group":
+		if p.file != nil && ok && text != "" && len(p.file.Groups) < maxGroupsPerFile {
+			p.file.Groups = append(p.file.Groups, text)
+		}
+	case "meta":
+		if ok && p.metaType != "" && len(p.out.Meta) < maxMetaEntries {
+			p.out.Meta[p.metaType] = text
+		}
+	case "file":
+		if p.file != nil {
+			p.finishFile()
+		}
+	}
+
+	if name == "segment" || name == "group" || name == "meta" {
+		p.collecting = false
+	}
+}
+
+func (p *parser) addSegment(id string) {
+	// Malformed or duplicate segments are skipped and count as missing.
+	// The filter also stops NNTP command injection through message-ids.
+	if id == "" || p.segNumber <= 0 || p.seen[p.segNumber] || strings.ContainsAny(id, "\r\n<> \x00") {
+		return
+	}
+
+	p.seen[p.segNumber] = true
+	p.segments++
+	p.file.Segments = append(p.file.Segments, Segment{Number: p.segNumber, Bytes: max(p.segBytes, 0), MessageID: id})
+}
+
+func (p *parser) finishFile() {
+	f := p.file
+	sort.Slice(f.Segments, func(a, b int) bool { return f.Segments[a].Number < f.Segments[b].Number })
+
+	f.Name = uniqueName(SafeName(nameFromSubject(f.Subject), len(p.out.Files)), p.used)
+	p.out.Files = append(p.out.Files, *f)
+	p.file, p.seen = nil, nil
+}
+
+func attr(t xml.StartElement, name string) string {
+	for _, a := range t.Attr {
+		if a.Name.Local == name {
+			return a.Value
+		}
+	}
+
+	return ""
 }
 
 var quoted = regexp.MustCompile(`"([^"]+)"`)
@@ -142,30 +257,33 @@ func nameFromSubject(subject string) string {
 }
 
 // SafeName reduces an untrusted name to a single path element that cannot
-// escape a directory or hide: no separators, no "." or "..", no control
-// characters, no leading dots, at most 255 bytes. An unusable name becomes
+// escape a directory, hide, or impersonate another name: no separators, no
+// "." or "..", no control, format (bidi) or invalid UTF-8 characters, no
+// leading dots, no trailing dots or spaces, no Windows device names, and
+// short enough to take a de-duplication suffix. An unusable name becomes
 // file-<index>.
 func SafeName(name string, index int) string {
+	name = strings.ToValidUTF8(name, "_")
 	name = strings.ReplaceAll(name, "\\", "/")
+
 	if i := strings.LastIndexByte(name, '/'); i >= 0 {
 		name = name[i+1:]
 	}
 
 	name = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' {
+		switch {
+		case unicode.IsControl(r), unicode.Is(unicode.Cf, r):
+			return '_'
+		case strings.ContainsRune(`:*?"<>|`, r):
 			return '_'
 		}
 
 		return r
 	}, name)
 
-	name = strings.TrimLeft(strings.TrimSpace(name), ".")
-	name = strings.TrimRight(name, ". ") // Windows strips these silently
-
-	for len(name) > maxNameBytes {
-		_, size := lastRune(name)
-		name = name[:len(name)-size]
-	}
+	name = trimName(name)
+	name = truncateRunes(name, maxNameBytes-nameRoom)
+	name = trimName(name) // truncation can expose a trailing dot or space
 
 	if name == "" || isReservedWindowsName(name) {
 		return "file-" + strconv.Itoa(index+1)
@@ -174,31 +292,60 @@ func SafeName(name string, index int) string {
 	return name
 }
 
-func lastRune(s string) (rune, int) {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i]&0xC0 != 0x80 {
-			return rune(s[i]), len(s) - i
-		}
-	}
+// trimName drops leading dots and spaces (hidden files) and trailing dots
+// and spaces, which Windows strips silently and would cause collisions.
+func trimName(s string) string {
+	s = strings.TrimLeft(strings.TrimSpace(s), ".")
 
-	return 0, 1
+	return strings.TrimRight(s, ". ")
 }
 
+func truncateRunes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+
+	s = s[:n]
+	for !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+
+	return s
+}
+
+// isReservedWindowsName matches Windows device names, which refer to
+// devices in any directory regardless of extension, following Go's own
+// list: CON, PRN, AUX, NUL, COM0-9, LPT0-9 (including superscript digits),
+// CONIN$ and CONOUT$. Trailing spaces before the extension do not help.
 func isReservedWindowsName(name string) bool {
-	base, _, _ := strings.Cut(strings.ToUpper(name), ".")
+	base, _, _ := strings.Cut(name, ".")
+	base = strings.ToUpper(strings.TrimRight(base, " "))
+
 	switch base {
-	case "CON", "PRN", "AUX", "NUL",
-		"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
 		return true
+	}
+
+	if len(base) >= 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) {
+		suffix := base[3:]
+
+		switch suffix {
+		case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³":
+			return true
+		}
 	}
 
 	return false
 }
 
+// collisionKey folds case and Unicode normalisation, so names that the
+// filesystem would treat as the same (NTFS, APFS) are detected.
+func collisionKey(name string) string {
+	return strings.ToLower(norm.NFC.String(name))
+}
+
 func uniqueName(name string, used map[string]bool) string {
-	key := strings.ToLower(name)
-	if !used[key] {
+	if key := collisionKey(name); !used[key] {
 		used[key] = true
 		return name
 	}
@@ -210,8 +357,8 @@ func uniqueName(name string, used map[string]bool) string {
 
 	for n := 2; ; n++ {
 		candidate := fmt.Sprintf("%s (%d)%s", stem, n, ext)
-		if !used[strings.ToLower(candidate)] {
-			used[strings.ToLower(candidate)] = true
+		if key := collisionKey(candidate); !used[key] {
+			used[key] = true
 			return candidate
 		}
 	}

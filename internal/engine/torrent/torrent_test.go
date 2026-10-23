@@ -112,7 +112,8 @@ func seed(t *testing.T, payloadDir string, files map[string][]byte, uploadBps in
 }
 
 func newTestEngine(peer string) *Engine {
-	e := New(Config{Log: slog.New(slog.DiscardHandler), StallTimeout: 30 * time.Second, MetadataTimeout: 30 * time.Second})
+	// The test seeder is on loopback, which the default policy blocks.
+	e := New(Config{Log: slog.New(slog.DiscardHandler), StallTimeout: 30 * time.Second, MetadataTimeout: 30 * time.Second, AllowLAN: true})
 	e.cfg.noDHT = true
 	e.cfg.peerAddrs = []string{peer}
 
@@ -219,5 +220,85 @@ func TestCancelAndResume(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(dir, res.Files[0].Path))
 	if !bytes.Equal(got, files["big.bin"]) {
 		t.Fatal("resumed content mismatch")
+	}
+}
+
+func TestLANPeersBlockedByDefault(t *testing.T) {
+	dir := t.TempDir()
+	peer := seed(t, dir, map[string][]byte{"a.bin": randBytes(64 << 10)}, 0)
+
+	e := New(Config{Log: slog.New(slog.DiscardHandler), StallTimeout: 2 * time.Second, MetadataTimeout: 5 * time.Second})
+	e.cfg.noDHT = true
+	e.cfg.peerAddrs = []string{peer}
+
+	defer func() { _ = e.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := e.Download(ctx, engine.Job{ID: "lan", Dir: dir, PayloadPath: filepath.Join(dir, "payload.torrent")}, nil)
+
+	var f *engine.Failure
+	if !errors.As(err, &f) || f.Class != pb.FailureClass_FAILURE_CLASS_INCOMPLETE {
+		t.Fatalf("err = %v, want INCOMPLETE (loopback seeder must be unreachable)", err)
+	}
+}
+
+// H1: a zero info hash used to panic inside anacrolix and kill the agent.
+func TestZeroOrV2OnlyMagnetIsRejected(t *testing.T) {
+	e := New(Config{Log: slog.New(slog.DiscardHandler), MetadataTimeout: time.Second})
+	defer func() { _ = e.Close() }()
+
+	for _, m := range []string{
+		"magnet:?xt=urn:btih:0000000000000000000000000000000000000000",
+		"magnet:?xt=urn:btmh:1220caf1e1c30e81cb361b9ee167c4aa64228a7fa4fa9f6105232b28ad099f3a302e",
+	} {
+		_, err := e.Download(context.Background(), engine.Job{ID: "z", Dir: t.TempDir(), Magnet: m}, nil)
+
+		var f *engine.Failure
+		if !errors.As(err, &f) || f.Class != pb.FailureClass_FAILURE_CLASS_PAYLOAD || f.Retryable {
+			t.Fatalf("%s: err = %v, want non-retryable PAYLOAD failure", m, err)
+		}
+	}
+
+	// The engine is still usable afterwards (no lock left held).
+	if err := e.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSameTorrentTwiceIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	peer := seed(t, dir, map[string][]byte{"big.bin": randBytes(2 << 20)}, 256<<10)
+
+	e := newTestEngine(peer)
+	defer func() { _ = e.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	started := make(chan struct{})
+	go func() {
+		_, _ = e.Download(ctx, engine.Job{ID: "first", Dir: dir, PayloadPath: filepath.Join(dir, "payload.torrent")},
+			func(engine.Progress) {
+				select {
+				case <-started:
+				default:
+					close(started)
+				}
+			})
+	}()
+
+	<-started
+
+	other := t.TempDir()
+	raw, _ := os.ReadFile(filepath.Join(dir, "payload.torrent"))
+	_ = os.WriteFile(filepath.Join(other, "payload.torrent"), raw, 0o600)
+
+	_, err := e.Download(ctx, engine.Job{ID: "second", Dir: other, PayloadPath: filepath.Join(other, "payload.torrent")}, nil)
+
+	var f *engine.Failure
+	if !errors.As(err, &f) || f.Class != pb.FailureClass_FAILURE_CLASS_CLIENT {
+		t.Fatalf("err = %v, want CLIENT failure for duplicate torrent", err)
 	}
 }

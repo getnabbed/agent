@@ -49,7 +49,8 @@ func (p Provider) String() string {
 func ParseProviderURL(raw string) (Provider, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return Provider{}, fmt.Errorf("invalid nntp url: %w", err)
+		// url.Parse errors quote the whole URL, password included: never wrap.
+		return Provider{}, errors.New("invalid nntp url: check that special characters in the user name and password are percent-encoded")
 	}
 
 	p := Provider{Host: u.Hostname(), Connections: 8}
@@ -76,6 +77,10 @@ func ParseProviderURL(raw string) (Provider, error) {
 	if u.User != nil {
 		p.Username = u.User.Username()
 		p.Password, _ = u.User.Password()
+	}
+
+	if !p.TLS && p.Username != "" && !isLoopbackHost(p.Host) {
+		return Provider{}, errors.New("refusing to send usenet credentials over plaintext nntp://; use nntps://")
 	}
 
 	if c := u.Query().Get("connections"); c != "" {
@@ -119,7 +124,7 @@ func dial(ctx context.Context, p Provider, timeout time.Duration) (*conn, error)
 		return nil, err
 	}
 
-	c := &conn{nc: nc, tp: textproto.NewConn(nc), timeout: timeout}
+	c := &conn{nc: nc, tp: textproto.NewConn(&lineLimitConn{Conn: nc}), timeout: timeout}
 
 	if err := c.handshake(p); err != nil {
 		_ = c.close()
@@ -217,4 +222,46 @@ func (c *conn) close() error {
 	_, _ = c.tp.Cmd("QUIT")
 
 	return c.tp.Close()
+}
+
+// maxLineBytes bounds any single line from the server. yEnc lines are ~130
+// bytes and status lines are short; textproto itself has no limit.
+const maxLineBytes = 64 << 10
+
+var errLineTooLong = errors.New("nntp: server sent an overlong line")
+
+// lineLimitConn fails reads once a line exceeds maxLineBytes, so a hostile
+// server cannot make the client buffer unbounded data.
+type lineLimitConn struct {
+	net.Conn
+
+	run int
+}
+
+func (c *lineLimitConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+
+	for _, b := range p[:n] {
+		if b == '\n' {
+			c.run = 0
+			continue
+		}
+
+		c.run++
+		if c.run > maxLineBytes {
+			return 0, errLineTooLong
+		}
+	}
+
+	return n, err
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+
+	return ip != nil && ip.IsLoopback()
 }

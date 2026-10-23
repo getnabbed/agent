@@ -32,6 +32,9 @@ import (
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
 
+// maxRecvMsgBytes bounds one ControlMessage on the wire.
+const maxRecvMsgBytes = 4 << 20
+
 // ErrRevoked means the cloud revoked this agent. Reconnecting cannot help.
 var ErrRevoked = errors.New("agent was revoked by the control plane")
 
@@ -145,6 +148,8 @@ func New(cfg Config) (*Client, error) {
 	opts := append([]grpc.DialOption{
 		grpc.WithTransportCredentials(creds),
 		grpc.WithUserAgent("nabbed-agent/" + cfg.Version),
+		// Explicit, so a library default change cannot raise it silently.
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxRecvMsgBytes)),
 	}, cfg.DialOptions...)
 	conn, err := grpc.NewClient(target, opts...)
 	if err != nil {

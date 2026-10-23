@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -531,5 +533,132 @@ func TestTargetTable(t *testing.T) {
 				t.Errorf("Target(%s, %s) allowed = %v, want %v", action, s, got, ok[s])
 			}
 		}
+	}
+}
+
+func TestUnfinishedLimitAndSpecSize(t *testing.T) {
+	h := newHarness(t, 1)
+
+	big := torrentDownload("big")
+	big.Release.Title = strings.Repeat("x", maxSpecBytes)
+
+	if err := h.start(big); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("oversized spec err = %v, want ErrInvalidArgument", err)
+	}
+
+	err := h.st.Update(context.Background(), func(tx *store.Tx) error {
+		for i := range maxUnfinished {
+			d := torrentDownload(fmt.Sprintf("f%d", i))
+			if err := insert(context.Background(), tx, d); err != nil {
+				return err
+			}
+
+			if _, err := transition(context.Background(), tx, d.GetId(), Queued, Failed, nil); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.start(torrentDownload("one-too-many")); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("err = %v, want ErrLimitExceeded", err)
+	}
+}
+
+func TestCancelledCleanupIsMarkedAndGarbageCollected(t *testing.T) {
+	h := newHarness(t, 1)
+
+	if err := h.start(torrentDownload("d1")); err != nil {
+		t.Fatal(err)
+	}
+
+	h.waitStarted()
+
+	if err := h.act(Cancel, "d1"); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var removed int
+		_ = h.st.DB().QueryRow("SELECT data_removed FROM downloads WHERE id = 'd1'").Scan(&removed)
+
+		if removed == 1 {
+			break
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatal("cancelled download was never marked cleaned")
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if n, err := gcFinished(context.Background(), h.st, time.Now().Add(time.Hour), time.Now()); err != nil || n != 1 {
+		t.Fatalf("gc = %d, %v; want 1 row", n, err)
+	}
+
+	if _, err := get(context.Background(), h.st.DB(), "d1"); !errors.Is(err, errNotFound) {
+		t.Fatalf("row still present after GC: %v", err)
+	}
+}
+
+func TestRedactRemovesHostPaths(t *testing.T) {
+	h := newHarness(t, 1)
+
+	got := h.m.redact("d1", "open "+filepath.Join(h.m.workDir("d1"), "data", "x")+": denied; also "+h.m.cfg.Dir)
+	if strings.Contains(got, h.m.cfg.Dir) {
+		t.Fatalf("host path leaked: %s", got)
+	}
+}
+
+func TestPayloadRedirectPolicy(t *testing.T) {
+	body := []byte("payload")
+	sum := sha256.Sum256(body)
+
+	var sawAuth atomic.Bool
+
+	other := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			sawAuth.Store(true)
+		}
+
+		_, _ = w.Write(body)
+	}))
+	defer other.Close()
+
+	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/agent/payloads/elsewhere":
+			http.Redirect(w, r, other.URL+"/blob", http.StatusFound)
+		case "/api/agent/payloads/downgrade":
+			http.Redirect(w, r, "http://"+r.Host+"/plain", http.StatusFound)
+		}
+	}))
+	defer api.Close()
+
+	// One client trusting both test servers' certificates.
+	pool := api.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	pool.AddCert(other.Certificate())
+
+	u, _ := url.Parse(api.URL)
+	f := &HTTPFetcher{API: u, Client: api.Client(), Tokens: &staticTokens{}}
+
+	ref := &pb.PayloadRef{Id: "elsewhere", Sha256: sum[:], Size: uint64(len(body))}
+	if err := fetchPayload(context.Background(), f, ref, t.TempDir(), "p"); err != nil {
+		t.Fatal(err)
+	}
+
+	if sawAuth.Load() {
+		t.Fatal("bearer token was sent to another host")
+	}
+
+	ref.Id = "downgrade"
+	if err := fetchPayload(context.Background(), f, ref, t.TempDir(), "p"); err == nil {
+		t.Fatal("https to http redirect was followed")
 	}
 }

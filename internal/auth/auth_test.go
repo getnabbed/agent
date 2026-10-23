@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/url"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -203,4 +204,107 @@ func TestParseAPIURL(t *testing.T) {
 			t.Errorf("%s: expected error", s)
 		}
 	}
+}
+
+func TestPairingResponseIsValidated(t *testing.T) {
+	api, _ := url.Parse("https://api.nabbed.example")
+
+	ok := &AuthorizeResponse{UserCode: "ABCD-1234", VerificationURI: "https://app.nabbed.example/device"}
+	if err := checkAuthorizeResponse(api, ok); err != nil {
+		t.Fatalf("valid response rejected: %v", err)
+	}
+
+	for _, bad := range []*AuthorizeResponse{
+		{UserCode: "ABCD-1234", VerificationURI: "https://nabbed-login.evil/device"},
+		{UserCode: "ABCD-1234", VerificationURI: "http://app.nabbed.example/device"},
+		{UserCode: "\x1b[2J\x1b[31mPWNED", VerificationURI: "https://app.nabbed.example/device"},
+		{UserCode: "ABCD-1234", VerificationURI: "https://app.nabbed.example/device", VerificationURIComplete: "https://evil.example/?c=1"},
+	} {
+		if err := checkAuthorizeResponse(api, bad); err == nil {
+			t.Errorf("accepted %+v", bad)
+		}
+	}
+}
+
+func TestOnlyExplicitCodesArePermanent(t *testing.T) {
+	if (&APIError{Status: 401, Code: "Unauthorized"}).Permanent() {
+		t.Fatal("a bare 401 (WAF, proxy) must not force a re-pair")
+	}
+
+	if !(&APIError{Status: 400, Code: "invalid_grant"}).Permanent() {
+		t.Fatal("invalid_grant must be permanent")
+	}
+}
+
+func TestAPIHostIsLowercased(t *testing.T) {
+	u, err := ParseAPIURL("https://API.Nabbed.Example")
+	if err != nil || u.Host != "api.nabbed.example" {
+		t.Fatalf("host = %q, %v", u.Host, err)
+	}
+}
+
+// M6: if the rotated token cannot be saved, the new access token must not
+// be used, and the persisted intent must still allow an idempotent retry.
+func TestRotatedTokenIsNotUsedUntilSaved(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop root from writing")
+	}
+
+	f := newFakeAPI(t)
+	ts, store, _ := pairForTest(t, f)
+	first, _ := ts.Token(context.Background())
+	ts.Invalidate(first.Raw)
+
+	// Make the data dir read-only so Save fails after the server rotates.
+	creds, _ := store.Load()
+	pending := creds.Clone()
+	pending.PendingRefresh = &credstore.PendingRefresh{Nonce: "n1", RefreshToken: creds.RefreshToken, StartedAt: time.Now()}
+	if err := store.Save(pending); err != nil {
+		t.Fatal(err)
+	}
+
+	ts = NewTokenSource(NewClient(f.url(), f.srv.Client(), "test"), store, mustIdentity(t, store), pending, nil, quiet)
+
+	if err := os.Chmod(store.Dir(), 0o500); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = os.Chmod(store.Dir(), 0o700) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if _, err := ts.Token(ctx); err == nil {
+		t.Fatal("token returned although the rotated refresh token was not saved")
+	}
+
+	if err := os.Chmod(store.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// The retry replays the same nonce, the server answers idempotently,
+	// and the agent is not revoked.
+	if _, err := ts.Token(ctx); err != nil {
+		t.Fatalf("retry after save failure: %v", err)
+	}
+
+	if f.revoked {
+		t.Fatal("agent revoked after a failed save")
+	}
+}
+
+func mustIdentity(t *testing.T, store *credstore.Store) *identity.Identity {
+	t.Helper()
+
+	c, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := identity.FromSecrets(c.SignSeed, c.SealKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return id
 }

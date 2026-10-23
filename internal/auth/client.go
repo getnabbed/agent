@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"time"
 )
 
@@ -54,12 +55,15 @@ func (e *APIError) Error() string {
 
 // Permanent reports whether retrying the same request cannot succeed.
 func (e *APIError) Permanent() bool {
+	// Only explicit OAuth or agent error codes count. A bare 401 or 403 can
+	// come from a WAF, a captive portal or a TLS-intercepting proxy, and
+	// treating it as permanent would force a needless re-pair.
 	switch e.Code {
 	case "invalid_grant", "access_denied", "expired_token", "invalid_client", "unauthorized_client", "agent_revoked":
 		return true
 	}
 
-	return e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden
+	return false
 }
 
 // PublicKeys are sent at pairing, base64url without padding.
@@ -135,6 +139,10 @@ func (c *Client) Token(ctx context.Context, deviceCode string) (*TokenResponse, 
 		return nil, errors.New("cloud-api: incomplete token response")
 	}
 
+	if !validID(out.AgentID) || !validID(out.TenantID) {
+		return nil, errors.New("cloud-api: agent_id and tenant_id must be 1-64 letters, digits, - or _")
+	}
+
 	return &out, nil
 }
 
@@ -197,3 +205,9 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 
 	return nil
 }
+
+var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// validID reports whether a cloud-issued id is safe to store and to use in
+// file names.
+func validID(s string) bool { return idPattern.MatchString(s) }

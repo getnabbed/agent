@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -102,5 +104,33 @@ func TestLogFlagsInvalid(t *testing.T) {
 		if !strings.Contains(errOut, "unknown log") {
 			t.Errorf("%v: stderr = %q, want unknown log error", args, errOut)
 		}
+	}
+}
+
+func TestAPIClientNeverFollowsRedirects(t *testing.T) {
+	var followed bool
+
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { followed = true }))
+	defer target.Close()
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer api.Close()
+
+	hc, err := httpClient("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := hc.Post(api.URL+"/api/device/refresh", "application/json", strings.NewReader(`{"refresh_token":"secret"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = resp.Body.Close()
+
+	if followed || resp.StatusCode != http.StatusTemporaryRedirect {
+		t.Fatalf("followed=%v status=%d, want the redirect returned unfollowed", followed, resp.StatusCode)
 	}
 }

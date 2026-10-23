@@ -194,20 +194,26 @@ func (ts *TokenSource) refreshLocked(ctx context.Context) (AccessToken, error) {
 		return AccessToken{}, fmt.Errorf("refresh access token: %w", err)
 	}
 
-	tok, err := ParseAccessToken(resp.AccessToken, ts.clock.Local())
-	if err != nil {
-		return AccessToken{}, err
-	}
-
+	// The rotated refresh token must be durable before anything from this
+	// response is used. Using the new access token ends the server's
+	// idempotent-retry window for the old refresh token; if the new one were
+	// then lost, the next start would replay the old one and be revoked for
+	// reuse. If the save keeps failing, nothing is used: the intent on disk
+	// still allows the same idempotent retry later.
 	next := ts.creds.Clone()
 	next.RefreshToken = resp.RefreshToken
 	next.PendingRefresh = nil
 	next.RefreshedAt = ts.clock.Local().UTC()
+
+	if err := ts.saveDurably(ctx, next); err != nil {
+		return AccessToken{}, fmt.Errorf("persist rotated refresh token: %w", err)
+	}
+
 	ts.creds = next
-	if err := ts.store.Save(next); err != nil {
-		// The new refresh token is held in memory and the pending intent on
-		// disk still allows an idempotent retry, so keep running.
-		ts.log.Error("could not persist rotated refresh token; will retry on next refresh", "err", err)
+
+	tok, err := ParseAccessToken(resp.AccessToken, ts.clock.Local())
+	if err != nil {
+		return AccessToken{}, err
 	}
 
 	ts.current = tok
@@ -223,4 +229,28 @@ func newNonce() (string, error) {
 	}
 
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// saveDurably retries Save with backoff: a transient failure (a Windows
+// sharing violation, a momentarily full disk) must not lose a rotated token.
+func (ts *TokenSource) saveDurably(ctx context.Context, c *credstore.Credentials) error {
+	var err error
+
+	for attempt := range 5 {
+		if err = ts.store.Save(c); err == nil {
+			return nil
+		}
+
+		ts.log.Warn("saving rotated refresh token failed; retrying", "attempt", attempt+1, "err", err)
+
+		t := time.NewTimer(time.Duration(100<<attempt) * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return errors.Join(err, ctx.Err())
+		case <-t.C:
+		}
+	}
+
+	return err
 }

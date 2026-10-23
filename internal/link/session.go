@@ -13,9 +13,13 @@ import (
 const (
 	defaultHeartbeat = 15 * time.Second
 	missedAckLimit   = 3
-	commandQueue     = 64
-	eventQueue       = 256
-	queryTimeout     = 15 * time.Second
+	// commandQueue is small: commands apply sequentially anyway, and each
+	// queued command can decode to far more memory than its wire size.
+	commandQueue = 4
+	// maxClockOffset bounds the correction one HeartbeatAck may apply.
+	maxClockOffset = time.Hour
+	eventQueue     = 256
+	queryTimeout   = 15 * time.Second
 )
 
 // session is one live stream after Welcome.
@@ -110,10 +114,7 @@ func (s *session) run(ctx context.Context, in <-chan *pb.ControlMessage, recvErr
 				}
 
 				if st := k.HeartbeatAck.GetServerTimeMs(); st > 0 {
-					now := s.c.cfg.Clock.Local()
-					if off := s.c.cfg.Clock.Observe(time.UnixMilli(st), now); off > 2*time.Minute || off < -2*time.Minute {
-						s.c.log.Warn("host clock differs from the control plane", "offset", off.Round(time.Second))
-					}
+					s.observeClock(time.UnixMilli(st))
 				}
 			case *pb.ControlMessage_GoAway:
 				return s.c.goAway(k.GoAway, tok)
@@ -146,14 +147,10 @@ func (s *session) commandWorker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case cmd := <-s.commands:
-			cctx, cancel := ctx, context.CancelFunc(func() {})
-			if d := cmd.GetDeadlineMs(); d > 0 {
-				// deadline_ms is control-plane time; convert to the host clock.
-				cctx, cancel = context.WithDeadline(ctx, time.UnixMilli(d).Add(-s.c.cfg.Clock.Offset()))
-			}
-
-			res := s.c.cfg.Handler.HandleCommand(cctx, cmd)
-			cancel()
+			// deadline_ms is enforced by the handler against corrected time, so
+			// an expired command is still recorded as DEADLINE_EXCEEDED. A context
+			// deadline here would fail the transaction before that could happen.
+			res := s.c.cfg.Handler.HandleCommand(ctx, cmd)
 
 			if res == nil {
 				res = &pb.CommandResult{Outcome: pb.CommandOutcome_COMMAND_OUTCOME_FAILED, ErrorCode: pb.CommandErrorCode_COMMAND_ERROR_CODE_INTERNAL}
@@ -274,4 +271,23 @@ func (l *latest) drain() []*pb.AgentMessage {
 	l.order = l.order[:0]
 
 	return out
+}
+
+// observeClock learns the control plane's clock, ignoring corrections
+// larger than maxClockOffset: a hostile or broken gateway must not be able
+// to push signed timestamps out of the API's freshness window.
+func (s *session) observeClock(server time.Time) {
+	now := s.c.cfg.Clock.Local()
+	off := server.Sub(now)
+
+	if off > maxClockOffset || off < -maxClockOffset {
+		s.c.log.Warn("ignoring implausible control plane time; check the host clock", "offset", off.Round(time.Second))
+		return
+	}
+
+	s.c.cfg.Clock.Observe(server, now)
+
+	if off > 2*time.Minute || off < -2*time.Minute {
+		s.c.log.Warn("host clock differs from the control plane", "offset", off.Round(time.Second))
+	}
 }
