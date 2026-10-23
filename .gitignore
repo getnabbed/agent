@@ -1,0 +1,16 @@
+# Build output
+/bin/
+/dist/
+/agent
+/agent.exe
+
+# Go
+*.test
+*.out
+coverage.*
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
