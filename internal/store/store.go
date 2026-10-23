@@ -143,6 +143,11 @@ func (s *Store) Close() error { return s.db.Close() }
 // Path returns the database file path.
 func (s *Store) Path() string { return s.path }
 
+// DB exposes the database for reads by domain packages. Writes must go
+// through Update or ApplyCommand so that events and command results stay
+// atomic with the state they describe.
+func (s *Store) DB() *sql.DB { return s.db }
+
 // migrate applies embedded migrations newer than PRAGMA user_version, each
 // in its own transaction together with the version bump.
 func (s *Store) migrate(ctx context.Context) error {

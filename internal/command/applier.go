@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/getnabbed/agent/internal/clock"
+	"github.com/getnabbed/agent/internal/download"
 	"github.com/getnabbed/agent/internal/store"
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
@@ -17,25 +18,47 @@ import (
 // (7 days); a command older than that cannot be redelivered.
 const resultRetention = 7 * 24 * time.Hour
 
-// Applier dispatches commands to their appliers inside a store transaction.
-type Applier struct {
-	store *store.Store
-	clock *clock.Clock
-	log   *slog.Logger
+// Downloads is the download state machine as seen by command handlers.
+// *download.Manager implements it.
+type Downloads interface {
+	Start(ctx context.Context, tx *store.Tx, sd *pb.StartDownload) error
+	Act(ctx context.Context, tx *store.Tx, action download.Action, id string) error
+	Update(ctx context.Context, tx *store.Tx, u *pb.UpdateDownload) error
+	// Kick wakes the scheduler after a command commits.
+	Kick()
 }
 
-// New returns an Applier backed by s. clk supplies control-plane-corrected
-// time for command deadlines; nil uses the host clock.
-func New(s *store.Store, clk *clock.Clock, log *slog.Logger) *Applier {
-	if clk == nil {
-		clk = clock.New()
+// Config configures an Applier.
+type Config struct {
+	Store *store.Store
+	// Clock supplies control-plane-corrected time for command deadlines;
+	// nil uses the host clock.
+	Clock *clock.Clock
+	// Downloads is optional; without it download commands are rejected as
+	// not implemented.
+	Downloads Downloads
+	Log       *slog.Logger
+}
+
+// Applier dispatches commands to their handlers inside a store transaction.
+type Applier struct {
+	store     *store.Store
+	clock     *clock.Clock
+	downloads Downloads
+	log       *slog.Logger
+}
+
+// New returns an Applier.
+func New(cfg Config) *Applier {
+	if cfg.Clock == nil {
+		cfg.Clock = clock.New()
 	}
 
-	if log == nil {
-		log = slog.Default()
+	if cfg.Log == nil {
+		cfg.Log = slog.Default()
 	}
 
-	return &Applier{store: s, clock: clk, log: log.With("component", "command")}
+	return &Applier{store: cfg.Store, clock: cfg.Clock, downloads: cfg.Downloads, log: cfg.Log.With("component", "command")}
 }
 
 // HandleCommand implements link.Handler. The state change and the recorded
@@ -56,6 +79,10 @@ func (a *Applier) HandleCommand(ctx context.Context, cmd *pb.Command) *pb.Comman
 
 	if replayed {
 		a.log.Debug("replayed stored command result", "command_id", cmd.GetId(), "outcome", res.GetOutcome())
+	}
+
+	if a.downloads != nil {
+		a.downloads.Kick()
 	}
 
 	return res

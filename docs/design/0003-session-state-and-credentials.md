@@ -399,13 +399,24 @@ concurrently, and that is reuse. So:
 | `internal/tlsconf` | System roots plus `ca_file`, SPKI pins |
 | `internal/store` | SQLite (pure Go) with embedded migrations, agent-id binding, exactly-once `ApplyCommand` (state change and result in one transaction), outbox written in the same transaction as state changes, read-only `Inspect` |
 | `internal/command` | Applier implementing the link handler on the store. Typed dispatch to one handler per command kind, grouped by domain (downloads, library, sources, settings), plus a deadline check. Every handler returns `REJECTED/UNSUPPORTED` "not implemented" for now; the rejection is recorded and replayed. A reflection test fails if a proto command kind has no handler. |
+| `internal/download` | Download state machine: QUEUED, FETCHING, DOWNLOADING, ASSEMBLING, IMPORTING, DONE, with PAUSED, FAILED and CANCELLED. The database is the source of truth: commands change state in their transaction and runners advance it with compare-and-set transitions, each writing a `DownloadUpdate` to the outbox atomically. Scheduler with a concurrency limit, recovery of interrupted downloads after restart, payload fetch with size cap and sha256 check, work directories named by a hash of the download id. |
+| `internal/engine/usenet` | Native usenet engine: NZB parsing with safe file names, NNTP client (TLS, AUTHINFO, BODY), yEnc decoding with CRC checks, one worker per provider connection, offset writes through `os.Root`, fsync-before-checkpoint resume, PAR2 recovery volumes deferred. |
+| `internal/engine/torrent` | Native BitTorrent engine on `anacrolix/torrent` (pure Go without cgo): per-download storage and piece-completion database, path checks on torrent metadata, stall and metadata timeouts, no seeding after completion, router port forwarding off by default. |
 | CLI | `pair`, `run` (auto-pairs), `status`, exit code 3 for re-pair |
 | Packaging | Distroless nonroot `Dockerfile`, hardened systemd unit |
 
 Not yet implemented:
 
-- Command kinds: each is rejected `UNSUPPORTED` until its applier and its
-  tables (roots, sources, downloads, inventory) land.
+- Library, source and settings commands, which are still rejected
+  `UNSUPPORTED` until their appliers and tables land.
+- Assembly: PAR2 verify and repair, archive extraction. Downloads with
+  missing usenet articles fail as `INCOMPLETE`.
+- Import: every download ends `FAILED{IMPORT, retryable}` with its files left
+  in the download directory, so `RetryDownload` can finish it once the
+  importer exists.
+- Sealed sources: the usenet provider comes from a temporary `--nntp` flag
+  or `NABBED_NNTP`.
+- Seeding policy, bandwidth limits and `SetAgentSettings`.
 - Queries, including `GetStatus`.
 - `policy.yaml`, and wiring SPKI pins into it.
 - Windows service wrapper (`x/sys/windows/svc`) and launchd plist.

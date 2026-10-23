@@ -265,7 +265,7 @@ func TestInspectIsReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if sum.AgentID != "agent-1" || sum.LastCommandID != "c1" || sum.AppliedCount != 1 || sum.SchemaVersion != 1 {
+	if sum.AgentID != "agent-1" || sum.LastCommandID != "c1" || sum.AppliedCount != 1 || sum.SchemaVersion < 1 {
 		t.Fatalf("Inspect = %+v", sum)
 	}
 

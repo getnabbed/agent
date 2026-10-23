@@ -24,7 +24,7 @@ func newTestApplier(t *testing.T, clk *clock.Clock) *Applier {
 
 	t.Cleanup(func() { _ = s.Close() })
 
-	return New(s, clk, slog.New(slog.DiscardHandler))
+	return New(Config{Store: s, Clock: clk, Log: slog.New(slog.DiscardHandler)})
 }
 
 // Every Command kind in the proto must reach its own handler. A kind added

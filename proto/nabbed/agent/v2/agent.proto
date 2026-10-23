@@ -229,6 +229,8 @@ enum CommandErrorCode {
   COMMAND_ERROR_CODE_UNSUPPORTED = 10;
   COMMAND_ERROR_CODE_DEADLINE_EXCEEDED = 11;
   COMMAND_ERROR_CODE_INTERNAL = 12;
+  // The command is malformed: a required field is missing or invalid.
+  COMMAND_ERROR_CODE_INVALID_ARGUMENT = 13;
 }
 
 // CommandResult answers exactly one Command. A redelivered command id gets

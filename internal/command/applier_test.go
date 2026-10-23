@@ -19,7 +19,7 @@ func TestUnsupportedCommandIsRecordedAndReplayed(t *testing.T) {
 
 	defer func() { _ = s.Close() }()
 
-	a := New(s, nil, slog.New(slog.DiscardHandler))
+	a := New(Config{Store: s, Log: slog.New(slog.DiscardHandler)})
 	cmd := &pb.Command{Id: "c1", Kind: &pb.Command_PauseDownload{PauseDownload: &pb.PauseDownload{DownloadId: "d"}}}
 
 	r1 := a.HandleCommand(ctx, cmd)

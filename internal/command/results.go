@@ -4,6 +4,11 @@ import (
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
 
+// applied is the result for a command that took effect as asked.
+func applied(msg string) *pb.CommandResult {
+	return &pb.CommandResult{Outcome: pb.CommandOutcome_COMMAND_OUTCOME_APPLIED, Message: msg}
+}
+
 // rejected is the result for a command the agent refuses, such as one that
 // breaks local policy. Rejections are recorded and replayed on redelivery.
 func rejected(code pb.CommandErrorCode, msg string) *pb.CommandResult {

@@ -69,6 +69,18 @@ token rotates. A systemd unit is in `contrib/systemd/`. See
 [design 0003](docs/design/0003-session-state-and-credentials.md) for how
 credentials and token refresh work.
 
+### Downloads
+
+The agent downloads natively: usenet over NNTP and BitTorrent, with no
+external client. Downloads go to `--download-dir` (default `<data-dir>/downloads`),
+at most `--max-downloads` at once. BitTorrent listens on `--torrent-port`
+(random by default) and does not seed after completion. Until usenet
+providers can be configured from the web app, set one with
+`NABBED_NNTP=nntps://user:pass@host:563?connections=8`.
+
+Import into the library is not implemented yet: completed downloads stay in
+the download directory and are reported as failed at the import step.
+
 ## Development
 
 Requires Go 1.26 or newer and [golangci-lint](https://golangci-lint.run/).

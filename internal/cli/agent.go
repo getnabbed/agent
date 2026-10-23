@@ -182,6 +182,9 @@ func runRun(ctx context.Context, e *env, args []string) int {
 	fs.SetOutput(e.stderr)
 	var f connFlags
 	f.register(fs)
+
+	var rf runFlags
+	rf.register(fs, e.dataDir)
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -249,10 +252,19 @@ func runRun(ctx context.Context, e *env, args []string) int {
 
 	defer func() { _ = state.Close() }()
 
-	applier := command.New(state, clk, e.log)
+	downloads, closeEngines, err := newDownloads(e, rf, state, api, hc, tokens)
+	if err != nil {
+		e.log.Error("download setup failed", "err", err)
+		return ExitError
+	}
+
+	defer closeEngines()
+
+	applier := command.New(command.Config{Store: state, Clock: clk, Downloads: downloads, Log: e.log})
 	applier.Prune(ctx)
 
 	lc, err := link.New(link.Config{
+		Capabilities:         downloads.Capabilities(),
 		GatewayURL:           creds.GatewayURL,
 		TransportCredentials: credentials.NewTLS(tlsCfg),
 		Tokens:               tokens,
@@ -272,8 +284,27 @@ func runRun(ctx context.Context, e *env, args []string) int {
 
 	defer func() { _ = lc.Close() }()
 
-	e.log.Info("agent starting", "agent_id", creds.AgentID, "gateway", creds.GatewayURL, "instance_id", lc.InstanceID())
-	switch err := lc.Run(ctx); {
+	downloads.SetTelemetry(lc)
+
+	e.log.Info("agent starting", "agent_id", creds.AgentID, "gateway", creds.GatewayURL,
+		"instance_id", lc.InstanceID(), "capabilities", downloads.Capabilities())
+
+	// Downloads keep running while the link reconnects; both stop when the
+	// link gives up for good or the process is asked to stop.
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+
+	dlDone := make(chan struct{})
+	go func() {
+		defer close(dlDone)
+		_ = downloads.Run(runCtx)
+	}()
+
+	err = lc.Run(runCtx)
+	stop()
+	<-dlDone
+
+	switch {
 	case err == nil:
 		e.log.Info("agent stopped")
 		return ExitOK

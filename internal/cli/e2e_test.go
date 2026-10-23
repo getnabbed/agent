@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -122,6 +123,10 @@ func TestRunPairsConnectsAndStopsOnRevoke(t *testing.T) {
 	case h := <-gw.hello:
 		if !h.GetFresh() || h.GetVersion() == "" {
 			t.Fatalf("unexpected hello %+v", h)
+		}
+
+		if !slices.Contains(h.GetCapabilities(), "download.torrent") || slices.Contains(h.GetCapabilities(), "download.usenet") {
+			t.Fatalf("capabilities = %v, want torrent only (no usenet provider)", h.GetCapabilities())
 		}
 	default:
 		t.Fatal("gateway never received a verified Hello")
