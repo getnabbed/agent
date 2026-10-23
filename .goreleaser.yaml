@@ -47,9 +47,10 @@ checksum:
 sboms:
   - artifacts: archive
 
-# Keyless signing with the workflow's GitHub OIDC identity. Verify with:
+# Keyless signing with the release workflow's GitHub OIDC identity. Verify
+# against that exact workflow and tag (see README "Verifying a release"):
 #   cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
-#     --certificate-identity-regexp 'https://github.com/getnabbed/agent/' \
+#     --certificate-identity https://github.com/getnabbed/agent/.github/workflows/release.yml@refs/tags/vX.Y.Z \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 signs:
   - cmd: cosign
@@ -83,8 +84,8 @@ dockers_v2:
       org.opencontainers.image.created: "{{ .CommitDate }}"
 
 # Signs the pushed multi-arch images by digest. Verify with:
-#   cosign verify ghcr.io/getnabbed/agent:latest \
-#     --certificate-identity-regexp 'https://github.com/getnabbed/agent/' \
+#   cosign verify ghcr.io/getnabbed/agent:X.Y.Z \
+#     --certificate-identity https://github.com/getnabbed/agent/.github/workflows/release.yml@refs/tags/vX.Y.Z \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 docker_signs:
   - cmd: cosign

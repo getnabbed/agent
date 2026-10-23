@@ -136,11 +136,14 @@ certificates.
 
 ### 4.3 Layers as implemented
 
-1. **Directory.** On Unix, created 0700 and re-chmodded if found looser,
-   with a warning if that fails, as on some NAS and NTFS mounts. On
-   Windows, a protected DACL `D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)`
-   grants SYSTEM, Administrators and the owner only, and blocks
-   inheritance from the parent.
+1. **Directory.** It must be owned by the agent's account (on Windows,
+   SYSTEM or Administrators also qualify), because whoever owns it can
+   replace the credentials whatever the permissions say. A pre-existing
+   directory must hold only the agent's own files, so pointing `data_dir`
+   at a shared folder fails instead of locking other users out. On Unix it
+   is made 0700, and the agent refuses to start if that fails. On Windows a
+   protected DACL grants full control to SYSTEM, Administrators and the
+   agent's own SID only, and blocks inheritance from the parent.
 2. **File.** 0600 via `CreateTemp`, `Sync`, `Rename` and directory
    `Sync`. Load warns if group or other bits are set.
 3. **Envelope.** `{"format":1,"protector":"none|dpapi","data":...}`. The

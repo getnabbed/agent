@@ -8,7 +8,9 @@ name: nabbed
 
 services:
   agent:
-    image: ghcr.io/getnabbed/agent:latest
+    # Major-version tag: picks up fixes, never a breaking release. Pin an
+    # exact version (and verify it, see the README) for full control.
+    image: ghcr.io/getnabbed/agent:1
     restart: unless-stopped
     environment:
       NABBED_API_URL: https://api.nabbed.example

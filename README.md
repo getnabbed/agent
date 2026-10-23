@@ -18,7 +18,7 @@ docker run -d --name nabbed-agent --restart unless-stopped \
   -v "$PWD/downloads:/downloads" \
   -p 6881:6881 -p 6881:6881/udp \
   --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
-  ghcr.io/getnabbed/agent:latest
+  ghcr.io/getnabbed/agent:1
 
 docker logs -f nabbed-agent   # shows the pairing code on first start
 ```
@@ -61,6 +61,7 @@ redacted.
 | `downloads.dir` | `NABBED_DOWNLOAD_DIR` | `--download-dir` | `<data_dir>/downloads`; `/downloads` in Docker |
 | `downloads.max_concurrent` | `NABBED_MAX_DOWNLOADS` | `--max-downloads` | `3` |
 | `torrent.port` | `NABBED_TORRENT_PORT` | `--torrent-port` | `0` (random); `6881` in Docker |
+| `torrent.allow_lan` | `NABBED_TORRENT_ALLOW_LAN` | `--torrent-allow-lan` | `false` |
 | `usenet.provider` | `NABBED_NNTP` | `--nntp` | none (temporary, see below) |
 
 Every environment variable also accepts a `_FILE` variant that names a file
@@ -109,18 +110,27 @@ signed with [cosign](https://docs.sigstore.dev/) using GitHub's OIDC
 identity (no long-lived keys), and every archive has an SBOM and a SLSA
 build provenance attestation.
 
+Verify against the exact release workflow and tag, not just the repository:
+a pattern that accepts any workflow in the repository would also accept one
+run from an unreviewed branch.
+
 ```sh
-# Archives: provenance, or the signed checksum file.
-gh attestation verify agent_1.2.3_linux_amd64.tar.gz --repo getnabbed/agent
+VERSION=1.2.3
+IDENTITY="https://github.com/getnabbed/agent/.github/workflows/release.yml@refs/tags/v$VERSION"
+ISSUER=https://token.actions.githubusercontent.com
+
+# Archives: build provenance, then the signed checksum file.
+gh attestation verify agent_${VERSION}_linux_amd64.tar.gz --repo getnabbed/agent \
+  --signer-workflow getnabbed/agent/.github/workflows/release.yml
 cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/getnabbed/agent/' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" \
+  --certificate-github-workflow-trigger push
 sha256sum --ignore-missing -c checksums.txt
 
 # Container image.
-cosign verify ghcr.io/getnabbed/agent:1.2.3 \
-  --certificate-identity-regexp '^https://github.com/getnabbed/agent/' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+cosign verify ghcr.io/getnabbed/agent:$VERSION \
+  --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" \
+  --certificate-github-workflow-trigger push
 ```
 
 ## Usage
@@ -147,6 +157,16 @@ record also carries its source file and line.
 Downloads go to the download directory, at most `downloads.max_concurrent`
 at once. BitTorrent listens on `torrent.port` and does not seed after
 completion; forwarding that port improves speeds but is optional.
+
+### Torrent network policy
+
+Torrent metadata comes from public indexers and peers, so it is untrusted.
+By default the agent will not contact anything on your local network on a
+torrent's behalf: peers, DHT nodes, trackers and web seeds with private,
+loopback, link-local (including cloud metadata), CGNAT or multicast
+addresses are refused, checked after DNS so a hostname cannot sneak one
+through. Set `torrent.allow_lan: true` only if you deliberately seed or
+fetch from machines on your LAN.
 
 Import into the library is not implemented yet: completed downloads stay in
 the download directory and are reported as failed at the import step.

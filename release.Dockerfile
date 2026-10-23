@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-#
 # Release image, built by GoReleaser (dockers_v2) from the binaries it has
 # already built: the build context holds $TARGETPLATFORM/agent. Keep the
 # runtime stage identical to Dockerfile.

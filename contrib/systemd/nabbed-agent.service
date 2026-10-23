@@ -2,8 +2,15 @@
 #
 #   install -m 0755 agent /usr/local/bin/nabbed-agent
 #   install -m 0644 nabbed-agent.service /etc/systemd/system/
-#   install -m 0644 agent.example.yaml /etc/nabbed-agent/agent.yaml   # optional
-#   systemctl edit nabbed-agent   # or set NABBED_API_URL, add ReadWritePaths for media
+#   install -m 0644 agent.example.yaml /etc/nabbed-agent/agent.yaml   # optional, NO secrets
+#   install -m 0600 -o root nntp.url /etc/nabbed-agent/nntp          # optional secret
+#   systemctl edit nabbed-agent   # set NABBED_API_URL, add ReadWritePaths for media
+#
+# Secrets: the service runs as a dynamic user, so the config file must be
+# world-readable and must not contain passwords. Pass secrets as systemd
+# credentials instead (LoadCredential below): they are readable only by
+# this service. Do not put secrets in Environment= either; `systemctl show`
+# reveals them to every local user.
 #   systemctl enable --now nabbed-agent
 #   journalctl -u nabbed-agent    # the pairing code appears here on first start
 
@@ -19,6 +26,9 @@ StartLimitBurst=10
 Type=exec
 # Optional config file, read-only to the agent under ProtectSystem=strict.
 Environment=NABBED_CONFIG=/etc/nabbed-agent/agent.yaml
+# Usenet provider as a systemd credential (uncomment once the file exists):
+# LoadCredential=nntp:/etc/nabbed-agent/nntp
+# Environment=NABBED_NNTP_FILE=%d/nntp
 ExecStart=/usr/local/bin/nabbed-agent --data-dir ${STATE_DIRECTORY} --log-format json run
 Restart=on-failure
 RestartSec=5s

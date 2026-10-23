@@ -15,11 +15,28 @@
 | Pinning | Base images by digest in literal `FROM` lines; Actions by commit SHA; tool versions explicit | Dependabot updates all three. No `latest` anywhere in the build path. |
 | Toolchain | `go 1.27.3` minimum; `GOTOOLCHAIN=local` in builds | The minimum carries the standard-library fixes; `local` stops a build from silently fetching another toolchain. |
 | Reproducibility | `-trimpath`, commit timestamps, no build-host data | Verified: two clean builds of a commit are byte-identical. |
-| Signing | cosign keyless (GitHub OIDC) for `checksums.txt` and every image | No long-lived keys to leak or rotate. |
+| Signing | cosign keyless (GitHub OIDC) for `checksums.txt` and every image, verified against the exact `release.yml@refs/tags/vX.Y.Z` identity | No long-lived keys to leak or rotate. A repository-wide identity pattern would also accept a workflow run from an unreviewed branch. |
+| Release gate | Release job runs in the protected `release` environment and refuses tags whose commit is not on `main` | One collaborator or one leaked token must not be able to publish a signed release. |
 | Supply chain | SPDX SBOM per archive, BuildKit SBOM attestation per image, SLSA provenance for archives | Users can audit contents and verify where a binary was built. |
 | Vulnerabilities | `govulncheck` in CI | Fails only on vulnerabilities in code the agent calls, so it stays actionable. |
 | Runtime hardening | Read-only root, all capabilities dropped, `no-new-privileges`, `/tmp` tmpfs | Documented in the README and set in `contrib/docker/compose.yaml`. The agent needs none of what is removed; SQLite keeps temp data in memory. |
+| Torrent networking | Peers, DHT nodes, trackers and web seeds on local networks are refused unless `torrent.allow_lan` is set; WebTorrent is disabled | Torrent metadata is untrusted: it must not be able to make the agent probe LAN devices, the router or cloud metadata endpoints. |
 | Health check | None in the image | Docker already restarts a dead process. A check that tracked cloud connectivity would restart healthy agents during cloud outages. Revisit with the local control socket. |
+
+## Repository settings (outside the code)
+
+The release gate depends on settings that live in GitHub, not in this
+repository. They must be in place before the first tag:
+
+- **The repository lives at `github.com/getnabbed/agent`.** It currently
+  redirects to `wilderness-cloud/agent`; transfer it back. Signatures,
+  image names (`ghcr.io/getnabbed/agent`) and the module path all assume
+  `getnabbed`, and a redirect would let whoever later creates
+  `getnabbed/agent` mint signatures that pass verification.
+- **A `release` environment with required reviewers**, limited to the
+  `v*` tag pattern.
+- **A tag ruleset** restricting who may create or move `v*` tags.
+- **Branch protection on `main`** requiring the CI checks.
 
 ## Configuration
 

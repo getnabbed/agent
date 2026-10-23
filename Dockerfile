@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-#
 # Builds the agent image from source: `docker build -t nabbed-agent .`
 # Releases use release.Dockerfile, which packages the binaries GoReleaser
 # already built and signed, so both produce the same runtime image.
