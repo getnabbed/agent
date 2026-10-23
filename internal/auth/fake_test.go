@@ -77,7 +77,16 @@ func (f *fakeAPI) authorize(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, AuthorizeResponse{DeviceCode: "dc", UserCode: "ABCD-EFGH", VerificationURI: "http://" + r.Host + "/device", Interval: 1})
 }
 
-func (f *fakeAPI) token(w http.ResponseWriter, _ *http.Request) {
+func (f *fakeAPI) token(w http.ResponseWriter, r *http.Request) {
+	// Like cloud-api: RFC 8628 requires the grant type.
+	var req map[string]string
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	if req["grant_type"] != GrantTypeDeviceCode || req["device_code"] == "" {
+		writeJSON(w, 400, map[string]string{"error": "invalid_request"})
+		return
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.pendingPolls > 0 {
@@ -93,6 +102,12 @@ func (f *fakeAPI) token(w http.ResponseWriter, _ *http.Request) {
 func (f *fakeAPI) refresh(w http.ResponseWriter, r *http.Request) {
 	var req RefreshRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	if req.GrantType != GrantTypeRefreshToken {
+		writeJSON(w, 400, map[string]string{"error": "invalid_request"})
+		return
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.refreshes++

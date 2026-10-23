@@ -17,6 +17,15 @@ import (
 
 const maxResponseBytes = 1 << 20
 
+// OAuth grant types sent to cloud-api.
+const (
+	// GrantTypeDeviceCode is required when polling /api/device/token
+	// (RFC 8628 section 3.4).
+	GrantTypeDeviceCode = "urn:ietf:params:oauth:grant-type:device_code"
+	// GrantTypeRefreshToken is sent to /api/device/refresh (RFC 6749 section 6).
+	GrantTypeRefreshToken = "refresh_token"
+)
+
 // Client talks to the cloud-api device endpoints.
 type Client struct {
 	base      *url.URL
@@ -102,6 +111,8 @@ type TokenResponse struct {
 // RefreshRequest is the body of POST /api/device/refresh. Signature is
 // base64url of Ed25519 over identity.RefreshSigningInput.
 type RefreshRequest struct {
+	// GrantType is always "refresh_token" (RFC 6749 section 6); Refresh sets it.
+	GrantType    string `json:"grant_type"`
 	RefreshToken string `json:"refresh_token"`
 	TimestampMs  int64  `json:"timestamp_ms"`
 	Nonce        string `json:"nonce"`
@@ -131,7 +142,8 @@ func (c *Client) Authorize(ctx context.Context, req AuthorizeRequest) (*Authoriz
 // Token polls once for the device-flow result.
 func (c *Client) Token(ctx context.Context, deviceCode string) (*TokenResponse, error) {
 	var out TokenResponse
-	if err := c.post(ctx, "/api/device/token", map[string]string{"device_code": deviceCode}, &out); err != nil {
+	body := map[string]string{"grant_type": GrantTypeDeviceCode, "device_code": deviceCode}
+	if err := c.post(ctx, "/api/device/token", body, &out); err != nil {
 		return nil, err
 	}
 
@@ -148,6 +160,8 @@ func (c *Client) Token(ctx context.Context, deviceCode string) (*TokenResponse, 
 
 // Refresh exchanges a refresh token for a new pair.
 func (c *Client) Refresh(ctx context.Context, req RefreshRequest) (*RefreshResponse, error) {
+	req.GrantType = GrantTypeRefreshToken
+
 	var out RefreshResponse
 	if err := c.post(ctx, "/api/device/refresh", req, &out); err != nil {
 		return nil, err
