@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"sort"
 
+	"github.com/getnabbed/agent/internal/logging"
 	"github.com/getnabbed/agent/internal/version"
 )
 
@@ -18,11 +20,18 @@ const (
 	ExitUsage = 2
 )
 
+// env carries the process-level dependencies handed to every command.
+type env struct {
+	stdout io.Writer
+	stderr io.Writer
+	log    *slog.Logger
+}
+
 // command is a single subcommand.
 type command struct {
 	name    string
 	summary string
-	run     func(args []string, stdout, stderr io.Writer) int
+	run     func(e *env, args []string) int
 }
 
 var commands = map[string]command{
@@ -41,6 +50,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	fs.Usage = func() { printUsage(stderr) }
 
 	showVersion := fs.Bool("version", false, "print version information and exit")
+	logLevel := fs.String("log-level", "info", "minimum log level: debug, info, warn, error")
+	logFormat := fs.String("log-format", "auto", "log output format: auto, json, text")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -50,8 +61,28 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if *showVersion {
-		return runVersion(nil, stdout, stderr)
+		return runVersion(&env{stdout: stdout, stderr: stderr, log: slog.Default()}, nil)
 	}
+
+	level, err := logging.ParseLevel(*logLevel)
+	if err != nil {
+		fmt.Fprintf(stderr, "agent: %v\n", err)
+		return ExitUsage
+	}
+	format, err := logging.ParseFormat(*logFormat)
+	if err != nil {
+		fmt.Fprintf(stderr, "agent: %v\n", err)
+		return ExitUsage
+	}
+	logger := logging.New(logging.Options{
+		Format:    format,
+		Level:     level,
+		Output:    stderr,
+		AddSource: level <= slog.LevelDebug,
+	})
+	slog.SetDefault(logger)
+
+	e := &env{stdout: stdout, stderr: stderr, log: logger}
 
 	rest := fs.Args()
 	if len(rest) == 0 {
@@ -71,11 +102,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		printUsage(stderr)
 		return ExitUsage
 	}
-	return cmd.run(rest[1:], stdout, stderr)
+	e.log.Debug("running command", "command", name, "args", rest[1:])
+	return cmd.run(e, rest[1:])
 }
 
-func runVersion(_ []string, stdout, _ io.Writer) int {
-	fmt.Fprintln(stdout, "agent", version.String())
+func runVersion(e *env, _ []string) int {
+	fmt.Fprintln(e.stdout, "agent", version.String())
 	return ExitOK
 }
 
@@ -95,5 +127,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintf(w, "  %-10s %s\n", "help", "Show this help")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Flags:")
-	fmt.Fprintln(w, "  --version  Print version information and exit")
+	fmt.Fprintln(w, "  --log-level <level>    Minimum log level: debug, info, warn, error (default info)")
+	fmt.Fprintln(w, "  --log-format <format>  Log output format: auto, json, text (default auto)")
+	fmt.Fprintln(w, "  --version              Print version information and exit")
 }

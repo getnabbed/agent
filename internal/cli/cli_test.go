@@ -62,3 +62,35 @@ func TestUnknownCommand(t *testing.T) {
 		t.Fatalf("stderr = %q, want unknown command message", errOut)
 	}
 }
+
+func TestLogFlagsJSON(t *testing.T) {
+	code, _, errOut := run(t, "--log-level", "debug", "--log-format", "json", "version")
+	if code != ExitOK {
+		t.Fatalf("exit code = %d, want %d", code, ExitOK)
+	}
+	if !strings.Contains(errOut, `"msg":"running command"`) || !strings.Contains(errOut, `"command":"version"`) {
+		t.Fatalf("stderr = %q, want JSON debug log line", errOut)
+	}
+}
+
+func TestLogFlagsText(t *testing.T) {
+	code, _, errOut := run(t, "--log-level", "debug", "--log-format", "text", "version")
+	if code != ExitOK {
+		t.Fatalf("exit code = %d, want %d", code, ExitOK)
+	}
+	if !strings.Contains(errOut, "DEBUG running command") || !strings.Contains(errOut, "command=version") {
+		t.Fatalf("stderr = %q, want text debug log line", errOut)
+	}
+}
+
+func TestLogFlagsInvalid(t *testing.T) {
+	for _, args := range [][]string{{"--log-level", "loud", "version"}, {"--log-format", "yaml", "version"}} {
+		code, _, errOut := run(t, args...)
+		if code != ExitUsage {
+			t.Errorf("%v: exit code = %d, want %d", args, code, ExitUsage)
+		}
+		if !strings.Contains(errOut, "unknown log") {
+			t.Errorf("%v: stderr = %q, want unknown log error", args, errOut)
+		}
+	}
+}

@@ -25,6 +25,23 @@ agent version
 agent help
 ```
 
+### Logging
+
+Logs are written to stderr using Go's `log/slog`. Two formats are built in:
+
+- `text`: compact, human-readable lines with colour when stderr is a terminal
+  (disable colour by setting `NO_COLOR`).
+- `json`: one JSON object per line, for log shippers and CI.
+
+The default (`auto`) picks `text` on a terminal and `json` otherwise.
+
+```sh
+agent --log-format json --log-level debug version
+```
+
+`--log-level` accepts `debug`, `info` (default), `warn` or `error`. At `debug`
+level each record also carries its source file and line.
+
 ## Development
 
 Requires Go 1.26 or newer and [golangci-lint](https://golangci-lint.run/).
