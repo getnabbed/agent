@@ -42,6 +42,33 @@ agent --log-format json --log-level debug version
 `--log-level` accepts `debug`, `info` (default), `warn` or `error`. At `debug`
 level each record also carries its source file and line.
 
+### Pairing and running
+
+```sh
+agent pair --api-url https://api.nabbed.example   # shows a code to approve in the web app
+agent run                                         # connects; pairs first if needed
+agent status                                      # identity, gateway, fingerprint (no secrets)
+```
+
+Credentials live in an owner-only data directory (`--data-dir`, env
+`NABBED_AGENT_DATA_DIR`). Exit code 3 means the agent was revoked or its
+credentials expired and it must be paired again.
+
+### Docker
+
+```sh
+docker run -d --name nabbed-agent \
+  -e NABBED_API_URL=https://api.nabbed.example \
+  -v nabbed-agent:/data \
+  ghcr.io/getnabbed/agent:latest
+docker logs nabbed-agent   # shows the pairing code on first start
+```
+
+Use a persistent volume for `/data`, never a secret or env var: the refresh
+token rotates. A systemd unit is in `contrib/systemd/`. See
+[design 0003](docs/design/0003-session-state-and-credentials.md) for how
+credentials and token refresh work.
+
 ## Development
 
 Requires Go 1.26 or newer and [golangci-lint](https://golangci-lint.run/).
@@ -50,6 +77,7 @@ Requires Go 1.26 or newer and [golangci-lint](https://golangci-lint.run/).
 make build   # build ./bin/agent
 make test    # run tests with the race detector
 make lint    # run golangci-lint
+make proto   # regenerate pkg/proto from proto/ (buf)
 make all     # lint, test, build
 ```
 
