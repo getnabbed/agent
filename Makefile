@@ -8,7 +8,7 @@ LDFLAGS  := -s -w \
 	-X $(MODULE)/internal/version.Commit=$(COMMIT) \
 	-X $(MODULE)/internal/version.Date=$(DATE)
 
-.PHONY: all build install test lint fmt vet tidy clean
+.PHONY: all build install test lint fmt vet tidy clean proto proto-lint
 
 all: lint test build
 
@@ -23,6 +23,13 @@ test:
 
 lint:
 	golangci-lint run ./...
+
+proto:
+	buf generate
+
+proto-lint:
+	buf lint
+	buf format --diff --exit-code
 
 fmt:
 	gofmt -s -w .

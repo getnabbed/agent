@@ -1,0 +1,511 @@
+// nabbed.agent.v2 is the wire contract between nabbed-agent (data plane, on the
+// user's hardware) and cloud-gateway (control plane). See design 0001.
+//
+// One bidirectional stream carries five kinds of traffic, each with its own
+// delivery rule:
+//
+//   Session    both ways, in-band, per stream (Hello, Welcome, Heartbeat, GoAway)
+//   Command    cloud -> agent, durable, ordered, at-least-once, idempotent by id
+//   Query      cloud -> agent, interactive, never queued, no side effects
+//   Event      agent -> cloud, at-least-once from the agent's outbox, acked
+//   Telemetry  agent -> cloud, lossy, latest value per key wins
+syntax = "proto3";
+
+package nabbed.agent.v2;
+
+// AgentGatewayService is served by cloud-gateway. The agent always dials out.
+service AgentGatewayService {
+  // Connect opens the agent's single long-lived session. The agent sends
+  // Hello first; the gateway answers Welcome or closes the stream.
+  //
+  // Authentication: "authorization: Bearer <ES256 agent JWT>" metadata on the
+  // stream. The token is checked once at open; when it nears expiry the
+  // gateway sends GoAway{TOKEN_EXPIRING} and the agent reconnects with a
+  // fresh one.
+  rpc Connect(stream AgentMessage) returns (stream ControlMessage);
+}
+
+// Header is carried by every message in both directions.
+message Header {
+  // Unique message id (UUIDv7 recommended).
+  string id = 1;
+  // Id of the message this one answers, if any.
+  string correlation_id = 2;
+  // Sender wall-clock time, Unix milliseconds.
+  int64 timestamp_ms = 3;
+  // W3C trace context (traceparent, tracestate), optional.
+  map<string, string> trace_context = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Envelopes
+// ---------------------------------------------------------------------------
+
+// ControlMessage flows cloud -> agent.
+message ControlMessage {
+  Header header = 1;
+  oneof kind {
+    Welcome welcome = 10;
+    HeartbeatAck heartbeat_ack = 11;
+    GoAway go_away = 12;
+    Command command = 20;
+    Query query = 21;
+    EventAck event_ack = 22;
+  }
+}
+
+// AgentMessage flows agent -> cloud. agent_id and tenant_id are never sent:
+// the gateway stamps them from the verified JWT.
+message AgentMessage {
+  Header header = 1;
+  oneof kind {
+    Hello hello = 10;
+    Heartbeat heartbeat = 11;
+    CommandResult command_result = 20;
+    QueryResult query_result = 21;
+    Event event = 22;
+    Telemetry telemetry = 23;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Session
+// ---------------------------------------------------------------------------
+
+// Hello is the first message on every stream.
+message Hello {
+  string version = 1;
+  repeated string capabilities = 2;
+  // Random per agent process start. The gateway fences older sessions of the
+  // same agent with GoAway{SUPERSEDED}.
+  string instance_id = 3;
+  string os = 4;
+  // True when the agent has no local state (new install or wiped data dir);
+  // the cloud rehydrates it by re-issuing configuration commands.
+  bool fresh = 5;
+  // Id of the last Command the agent applied, empty if none.
+  string last_command_id = 6;
+  uint32 pending_event_count = 7;
+  repeated LocalSourceSummary local_sources = 8;
+  // Wall-clock time the signature was made, Unix milliseconds.
+  int64 signed_at_ms = 9;
+  // Ed25519 signature by the agent identity key over the canonical Hello
+  // signing input (see internal/identity), verified against the token's cnf.
+  bytes signature = 10;
+}
+
+message LocalSourceSummary {
+  string id = 1;
+  string kind = 2;
+}
+
+message Welcome {
+  string session_id = 1;
+  uint32 heartbeat_ms = 2;
+  uint64 max_stream_age_ms = 3;
+  repeated string features = 4;
+}
+
+message Heartbeat {
+  uint64 seq = 1;
+}
+
+message HeartbeatAck {
+  uint64 seq = 1;
+  int64 server_time_ms = 2;
+}
+
+enum GoAwayReason {
+  GO_AWAY_REASON_UNSPECIFIED = 0;
+  GO_AWAY_REASON_DRAIN = 1;
+  GO_AWAY_REASON_TOKEN_EXPIRING = 2;
+  GO_AWAY_REASON_SUPERSEDED = 3;
+  GO_AWAY_REASON_REVOKED = 4;
+  GO_AWAY_REASON_PROTOCOL_ERROR = 5;
+}
+
+message GoAway {
+  GoAwayReason reason = 1;
+  uint32 reconnect_after_ms = 2;
+  string message = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Commands: the only way agent state changes
+// ---------------------------------------------------------------------------
+
+message Command {
+  string id = 1;
+  int64 deadline_ms = 2;
+  oneof kind {
+    StartDownload start_download = 10;
+    UpdateDownload update_download = 11;
+    PauseDownload pause_download = 12;
+    ResumeDownload resume_download = 13;
+    RetryDownload retry_download = 14;
+    CancelDownload cancel_download = 15;
+
+    PutLibraryRoot put_library_root = 20;
+    RemoveLibraryRoot remove_library_root = 21;
+    SetImportPolicy set_import_policy = 22;
+    RescanLibrary rescan_library = 23;
+
+    PutSource put_source = 30;
+    RemoveSource remove_source = 31;
+
+    SetAgentSettings set_agent_settings = 40;
+  }
+}
+
+message StartDownload {
+  Download download = 1;
+}
+message UpdateDownload {
+  string download_id = 1;
+  optional int32 priority = 2;
+  optional string source_id = 3;
+}
+message PauseDownload {
+  string download_id = 1;
+}
+message ResumeDownload {
+  string download_id = 1;
+}
+message RetryDownload {
+  string download_id = 1;
+}
+message CancelDownload {
+  string download_id = 1;
+}
+
+message PutLibraryRoot {
+  LibraryRoot root = 1;
+}
+message RemoveLibraryRoot {
+  string root_id = 1;
+}
+message SetImportPolicy {
+  ImportMode mode = 1;
+  PathSanitizer sanitizer = 2;
+  repeated string extras = 3;
+}
+message RescanLibrary {
+  string root_id = 1;
+}
+
+message PutSource {
+  Source source = 1;
+}
+message RemoveSource {
+  string source_id = 1;
+}
+
+message SetAgentSettings {
+  uint32 max_concurrent = 1;
+  uint64 max_bps = 2;
+  bool host_stats = 3;
+}
+
+enum CommandOutcome {
+  COMMAND_OUTCOME_UNSPECIFIED = 0;
+  COMMAND_OUTCOME_APPLIED = 1;
+  COMMAND_OUTCOME_APPLIED_CAPPED = 2;
+  COMMAND_OUTCOME_PENDING_APPROVAL = 3;
+  COMMAND_OUTCOME_REJECTED = 4;
+  COMMAND_OUTCOME_FAILED = 5;
+}
+
+enum CommandErrorCode {
+  COMMAND_ERROR_CODE_UNSPECIFIED = 0;
+  COMMAND_ERROR_CODE_UNKNOWN_ID = 1;
+  COMMAND_ERROR_CODE_INVALID_TRANSITION = 2;
+  COMMAND_ERROR_CODE_ROOT_NOT_ALLOWED = 3;
+  COMMAND_ERROR_CODE_ROOT_IN_USE = 4;
+  COMMAND_ERROR_CODE_TEMPLATE_UNSAFE = 5;
+  COMMAND_ERROR_CODE_SOURCE_HOST_BLOCKED = 6;
+  COMMAND_ERROR_CODE_SOURCE_KIND_UNSUPPORTED = 7;
+  COMMAND_ERROR_CODE_SOURCE_UNSEALABLE = 8;
+  COMMAND_ERROR_CODE_PROTOCOL_UNAVAILABLE = 9;
+  COMMAND_ERROR_CODE_UNSUPPORTED = 10;
+  COMMAND_ERROR_CODE_DEADLINE_EXCEEDED = 11;
+  COMMAND_ERROR_CODE_INTERNAL = 12;
+}
+
+// CommandResult answers exactly one Command. A redelivered command id gets
+// the stored result replayed.
+message CommandResult {
+  string command_id = 1;
+  CommandOutcome outcome = 2;
+  CommandErrorCode error_code = 3;
+  string message = 4;
+  bytes payload = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Domain types carried by commands
+// ---------------------------------------------------------------------------
+
+enum LibraryKind {
+  LIBRARY_KIND_UNSPECIFIED = 0;
+  LIBRARY_KIND_MOVIES = 1;
+  LIBRARY_KIND_TV = 2;
+}
+
+// LibraryRoot.path must sit under a locally allowed_root, else
+// ROOT_NOT_ALLOWED.
+message LibraryRoot {
+  string id = 1;
+  LibraryKind kind = 2;
+  string path = 3;
+  string folder_template = 4;
+  string file_template = 5;
+  string specials_folder = 6;
+}
+
+// Source has no host field: the target lives inside sealed_config, a
+// libsodium sealed box addressed to the agent's X25519 key.
+message Source {
+  string id = 1;
+  string kind = 2;
+  string display_name = 3;
+  bytes sealed_config = 4;
+  bytes sealed_to_key = 5;
+  bool enabled = 6;
+}
+
+enum ImportMode {
+  IMPORT_MODE_UNSPECIFIED = 0;
+  IMPORT_MODE_AUTO = 1;
+  IMPORT_MODE_MOVE = 2;
+  IMPORT_MODE_COPY = 3;
+  IMPORT_MODE_HARDLINK = 4;
+}
+
+message PathSanitizer {
+  string replacement = 1;
+  bool ascii_only = 2;
+}
+
+message Download {
+  string id = 1;
+  string acquisition_id = 2;
+  Release release = 3;
+  string source_id = 4;
+  string root_id = 5;
+  NamingContext naming = 6;
+  optional string replaces_path = 7;
+  int32 priority = 8;
+}
+
+enum Protocol {
+  PROTOCOL_UNSPECIFIED = 0;
+  PROTOCOL_USENET = 1;
+  PROTOCOL_TORRENT = 2;
+}
+
+message Release {
+  Protocol protocol = 1;
+  string title = 2;
+  uint64 size = 3;
+  Quality quality = 4;
+  oneof payload {
+    PayloadRef payload_ref = 10;
+    string magnet = 11;
+  }
+}
+
+enum PayloadKind {
+  PAYLOAD_KIND_UNSPECIFIED = 0;
+  PAYLOAD_KIND_NZB = 1;
+  PAYLOAD_KIND_TORRENT = 2;
+}
+
+// PayloadRef points at bytes fetched over HTTPS from
+// GET /api/agent/payloads/{id}; never inlined.
+message PayloadRef {
+  string id = 1;
+  bytes sha256 = 2;
+  uint64 size = 3;
+  PayloadKind kind = 4;
+  int64 expires_ms = 5;
+}
+
+message MediaRef {
+  int64 tmdb_id = 1;
+  int64 tvdb_id = 2;
+  string imdb_id = 3;
+}
+
+message NamingContext {
+  MediaRef media = 1;
+  string title = 2;
+  int32 year = 3;
+  optional int32 season = 4;
+  repeated int32 episodes = 5;
+  repeated string episode_titles = 6;
+  Quality quality = 7;
+  optional string edition = 8;
+}
+
+message Quality {
+  string resolution = 1;
+  string source = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Queries: read-only, interactive, never queued
+// ---------------------------------------------------------------------------
+
+message Query {
+  string id = 1;
+  oneof kind {
+    BrowseFilesystem browse_filesystem = 10;
+    TestSource test_source = 11;
+    GetStatus get_status = 12;
+  }
+}
+
+message BrowseFilesystem {
+  string path = 1;
+  string page_token = 2;
+}
+message TestSource {
+  string source_id = 1;
+}
+message GetStatus {}
+
+message QueryResult {
+  string query_id = 1;
+  bool ok = 2;
+  string error = 3;
+  bytes payload = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Events: at-least-once from the outbox, deduplicated by Header.id
+// ---------------------------------------------------------------------------
+
+enum DownloadState {
+  DOWNLOAD_STATE_UNSPECIFIED = 0;
+  DOWNLOAD_STATE_QUEUED = 1;
+  DOWNLOAD_STATE_FETCHING = 2;
+  DOWNLOAD_STATE_DOWNLOADING = 3;
+  DOWNLOAD_STATE_ASSEMBLING = 4;
+  DOWNLOAD_STATE_IMPORTING = 5;
+  DOWNLOAD_STATE_DONE = 6;
+  DOWNLOAD_STATE_PAUSED = 7;
+  DOWNLOAD_STATE_FAILED = 8;
+  DOWNLOAD_STATE_CANCELLED = 9;
+}
+
+enum FailureClass {
+  FAILURE_CLASS_UNSPECIFIED = 0;
+  FAILURE_CLASS_PAYLOAD = 1;
+  FAILURE_CLASS_INCOMPLETE = 2;
+  FAILURE_CLASS_REPAIR = 3;
+  FAILURE_CLASS_EXTRACT = 4;
+  FAILURE_CLASS_CLIENT = 5;
+  FAILURE_CLASS_DISK = 6;
+  FAILURE_CLASS_IMPORT = 7;
+}
+
+message Event {
+  oneof kind {
+    DownloadUpdate download_update = 10;
+    ImportCompleted import_completed = 11;
+    ImportFailed import_failed = 12;
+    InventoryReport inventory_report = 13;
+    SourceHealth source_health = 14;
+    AgentNotice agent_notice = 15;
+  }
+}
+
+message Failure {
+  FailureClass class = 1;
+  bool retryable = 2;
+  string detail = 3;
+}
+
+message DownloadUpdate {
+  string download_id = 1;
+  DownloadState state = 2;
+  Failure failure = 3;
+}
+
+message ImportedFile {
+  string relative_path = 1;
+  uint64 size = 2;
+}
+
+message ImportCompleted {
+  string download_id = 1;
+  string root_id = 2;
+  repeated ImportedFile files = 3;
+  Quality quality = 4;
+}
+
+message ImportFailed {
+  string download_id = 1;
+  string root_id = 2;
+  Failure failure = 3;
+}
+
+message InventoryEntry {
+  string root_id = 1;
+  string relative_path = 2;
+  uint64 size = 3;
+  int64 mtime_ms = 4;
+}
+
+// InventoryReport carries at most 500 entries; larger inventories are split.
+message InventoryReport {
+  repeated InventoryEntry entries = 1;
+  bool last = 2;
+}
+
+message SourceHealth {
+  string source_id = 1;
+  bool healthy = 2;
+  string detail = 3;
+}
+
+message AgentNotice {
+  string code = 1;
+  string message = 2;
+}
+
+// EventAck is sent by the gateway only after JetStream has stored the events.
+message EventAck {
+  repeated string ids = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry: lossy, latest value per key wins
+// ---------------------------------------------------------------------------
+
+message Telemetry {
+  oneof kind {
+    DownloadProgress download_progress = 10;
+    HostStats host_stats = 11;
+  }
+}
+
+message DownloadProgress {
+  string download_id = 1;
+  float percent = 2;
+  uint64 bytes = 3;
+  uint64 speed_bps = 4;
+  uint64 eta_s = 5;
+}
+
+message RootDiskFree {
+  string root_id = 1;
+  uint64 free_bytes = 2;
+}
+
+message HostStats {
+  repeated RootDiskFree disk_free = 1;
+  // Only populated when the host owner opts in locally.
+  optional float cpu_percent = 2;
+  optional uint64 mem_used_bytes = 3;
+}
