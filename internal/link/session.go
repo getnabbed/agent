@@ -30,6 +30,7 @@ type session struct {
 	control   chan *pb.AgentMessage
 	events    chan *pb.AgentMessage
 	telemetry *latest
+	window    *window
 
 	commands chan *pb.Command
 	queries  chan struct{} // semaphore
@@ -49,6 +50,7 @@ func newSession(c *Client, stream pb.AgentGatewayService_ConnectClient, w *pb.We
 		control:   make(chan *pb.AgentMessage, 64),
 		events:    make(chan *pb.AgentMessage, eventQueue),
 		telemetry: newLatest(),
+		window:    newWindow(),
 		commands:  make(chan *pb.Command, commandQueue),
 		queries:   make(chan struct{}, c.cfg.QueryConcurrency),
 	}
@@ -67,6 +69,11 @@ func (s *session) run(ctx context.Context, in <-chan *pb.ControlMessage, recvErr
 	wg.Add(2)
 	go func() { defer wg.Done(); writeErr <- s.writer(ctx) }()
 	go func() { defer wg.Done(); s.commandWorker(ctx) }()
+
+	if s.c.cfg.Outbox != nil {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.pump(ctx) }()
+	}
 
 	ticker := time.NewTicker(s.heartbeat)
 	defer ticker.Stop()
@@ -119,6 +126,7 @@ func (s *session) run(ctx context.Context, in <-chan *pb.ControlMessage, recvErr
 			case *pb.ControlMessage_Query:
 				s.startQuery(ctx, m.GetHeader().GetId(), k.Query, &wg)
 			case *pb.ControlMessage_EventAck:
+				s.window.ack(k.EventAck.GetIds())
 				s.c.cfg.Handler.HandleEventAck(ctx, k.EventAck)
 			case *pb.ControlMessage_Welcome:
 				return errors.New("protocol: unexpected second Welcome")

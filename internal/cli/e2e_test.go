@@ -50,6 +50,20 @@ func (g *e2eGateway) Connect(srv pb.AgentGatewayService_ConnectServer) error {
 	g.hello <- h
 	_ = srv.Send(&pb.ControlMessage{Kind: &pb.ControlMessage_Welcome{Welcome: &pb.Welcome{SessionId: "s1", HeartbeatMs: 1000}}})
 
+	// One command, answered and recorded before the agent is revoked.
+	_ = srv.Send(&pb.ControlMessage{Kind: &pb.ControlMessage_Command{Command: &pb.Command{Id: "cmd-e2e", Kind: &pb.Command_RescanLibrary{RescanLibrary: &pb.RescanLibrary{RootId: "r"}}}}})
+
+	for {
+		m, err := srv.Recv()
+		if err != nil {
+			return err
+		}
+
+		if m.GetCommandResult().GetCommandId() == "cmd-e2e" {
+			break
+		}
+	}
+
 	return srv.Send(&pb.ControlMessage{Kind: &pb.ControlMessage_GoAway{GoAway: &pb.GoAway{Reason: pb.GoAwayReason_GO_AWAY_REASON_REVOKED}}})
 }
 
@@ -120,5 +134,9 @@ func TestRunPairsConnectsAndStopsOnRevoke(t *testing.T) {
 
 	if !strings.Contains(out.String(), "agent-9") || strings.Contains(out.String(), "rt") && strings.Contains(out.String(), "refresh_token") {
 		t.Fatalf("status output wrong or leaks secrets:\n%s", out.String())
+	}
+
+	if !strings.Contains(out.String(), "1 commands applied, last cmd-e2e") {
+		t.Fatalf("status does not show the recorded command:\n%s", out.String())
 	}
 }

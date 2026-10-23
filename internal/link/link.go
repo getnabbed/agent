@@ -9,8 +9,6 @@ package link
 
 import (
 	"context"
-	crand "crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -30,6 +28,7 @@ import (
 	"github.com/getnabbed/agent/internal/auth"
 	"github.com/getnabbed/agent/internal/clock"
 	"github.com/getnabbed/agent/internal/identity"
+	"github.com/getnabbed/agent/internal/ids"
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
 
@@ -47,11 +46,21 @@ type Signer interface {
 	Sign(msg []byte) []byte
 }
 
-// LocalState reports what the agent already has, for Hello.
+// LocalState reports what the agent already has, for Hello. *store.Store
+// implements it.
 type LocalState interface {
-	Fresh() bool
-	LastCommandID() string
-	PendingEventCount() uint32
+	HelloState(ctx context.Context) (fresh bool, lastCommandID string, pendingEvents uint32, err error)
+}
+
+// Outbox is the durable queue of events awaiting EventAck. *store.Store
+// implements it. Each session replays every unacknowledged event from the
+// start, in order; the cloud deduplicates by event id.
+type Outbox interface {
+	// PendingEvents returns up to limit events with seq > afterSeq, oldest
+	// first, and the seq of the last one returned.
+	PendingEvents(ctx context.Context, afterSeq int64, limit int) (eventIDs []string, events []*pb.Event, lastSeq int64, err error)
+	// EventsAdded is signalled when new events are committed.
+	EventsAdded() <-chan struct{}
 }
 
 // Handler applies inbound work. Methods are called from link-owned
@@ -75,8 +84,10 @@ type Config struct {
 	Signer  Signer
 	State   LocalState
 	Handler Handler
-	Clock   *clock.Clock
-	Logger  *slog.Logger
+	// Outbox is optional; without it no events are sent.
+	Outbox Outbox
+	Clock  *clock.Clock
+	Logger *slog.Logger
 
 	Version      string
 	OS           string
@@ -282,7 +293,12 @@ func (c *Client) session(parent context.Context) (established bool, err error) {
 		return false, c.classify(err, tok)
 	}
 
-	if err := stream.Send(c.hello(tok)); err != nil {
+	hello, err := c.hello(ctx, tok)
+	if err != nil {
+		return false, fmt.Errorf("build hello: %w", err)
+	}
+
+	if err := stream.Send(hello); err != nil {
 		return false, c.classify(err, tok)
 	}
 
@@ -334,9 +350,15 @@ func (c *Client) session(parent context.Context) (established bool, err error) {
 	return true, s.run(ctx, in, recvErr, tok)
 }
 
-func (c *Client) hello(tok auth.AccessToken) *pb.AgentMessage {
+func (c *Client) hello(ctx context.Context, tok auth.AccessToken) (*pb.AgentMessage, error) {
+	fresh, last, pending, err := c.cfg.State.HelloState(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	signedAt := c.cfg.Clock.Now().UnixMilli()
 	sig := c.cfg.Signer.Sign(identity.HelloSigningInput(tok.JTI, c.instanceID, signedAt))
+
 	return &pb.AgentMessage{
 		Header: c.header(""),
 		Kind: &pb.AgentMessage_Hello{Hello: &pb.Hello{
@@ -344,13 +366,13 @@ func (c *Client) hello(tok auth.AccessToken) *pb.AgentMessage {
 			Capabilities:      c.cfg.Capabilities,
 			InstanceId:        c.instanceID,
 			Os:                c.cfg.OS,
-			Fresh:             c.cfg.State.Fresh(),
-			LastCommandId:     c.cfg.State.LastCommandID(),
-			PendingEventCount: c.cfg.State.PendingEventCount(),
+			Fresh:             fresh,
+			LastCommandId:     last,
+			PendingEventCount: pending,
 			SignedAtMs:        signedAt,
 			Signature:         sig,
 		}},
-	}
+	}, nil
 }
 
 func (c *Client) header(correlationID string) *pb.Header {
@@ -405,34 +427,7 @@ func sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func newID() string {
-	var b [16]byte
-	_, _ = crand.Read(b[:])
-
-	return hex.EncodeToString(b[:])
-}
-
-// ErrNotConnected is returned by SendEvent when no session is live. Events
-// stay in the caller's outbox and are replayed on the next session.
-var ErrNotConnected = errors.New("link: not connected")
-
-// SendEvent queues an event on the live session. id is the outbox row id;
-// the gateway deduplicates on it, so resending after a reconnect is safe.
-func (c *Client) SendEvent(ctx context.Context, id string, ev *pb.Event) error {
-	s := c.current.Load()
-	if s == nil {
-		return ErrNotConnected
-	}
-
-	m := &pb.AgentMessage{Header: c.header(""), Kind: &pb.AgentMessage_Event{Event: ev}}
-	m.Header.Id = id
-	select {
-	case s.events <- m:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
+func newID() string { return ids.NewV7() }
 
 // SendTelemetry records the latest value for key (for example
 // "progress/<download_id>"). Telemetry is lossy: it is dropped when no

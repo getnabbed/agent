@@ -77,9 +77,21 @@ Implemented now:
 | Local policy (allowed roots, ceilings, TLS pins) | `policy.yaml`, host-owned | host owner's choice | low | Read by the agent, never written after pairing. Mount read-only in Docker. |
 | Unsealed source credentials | memory | while in use | **secret** | Unsealed on demand, never persisted in plaintext. |
 
-`fresh` in Hello is true when `state.db` is absent. This bootstrap has no
-store yet, so it always sends `fresh: true` and the cloud rehydrates on
-every connect. That is correct but wasteful until the store lands.
+`state.db` is bound to the agent id that created it. A database left by a
+previous identity, for example after `pair --force`, is moved aside as
+`state.db.<old-agent-id>.<unix>.bak` and a new one is created.
+
+`fresh` in Hello is true until the first command has been applied to this
+database. If a rehydrate is interrupted before any command lands, the
+agent says `fresh` again and the cloud simply repeats it. Once one command
+has landed, the rest of the rehydrate arrives from the durable command log.
+
+The database runs in WAL mode with `synchronous=FULL`. A power cut must
+not roll back a command whose result the cloud has already acknowledged.
+One connection serialises all access, and `agent status` reads through a
+separate read-only connection, so it is safe while the daemon runs.
+Command results are pruned after 7 days, matching the cloud log's
+retention, but the newest is always kept for `last_command_id`.
 
 ## 4. Credential storage
 
@@ -385,14 +397,16 @@ concurrently, and that is reuse. So:
 | `internal/auth` | Device flow client (RFC 8628 errors and `slow_down`), lazy token source with crash-safe rotation, gateway URL check (eTLD+1) |
 | `internal/link` | `Connect()` session: signed Hello, Welcome deadline, heartbeats, GoAway handling, backoff, ordered command worker, query pool, prioritised send lanes, clock offset |
 | `internal/tlsconf` | System roots plus `ca_file`, SPKI pins |
+| `internal/store` | SQLite (pure Go) with embedded migrations, agent-id binding, exactly-once `ApplyCommand` (state change and result in one transaction), outbox written in the same transaction as state changes, read-only `Inspect` |
+| `internal/command` | Applier implementing the link handler on the store. Every command kind is still rejected `UNSUPPORTED`, but the rejection is recorded and replayed. |
 | CLI | `pair`, `run` (auto-pairs), `status`, exit code 3 for re-pair |
 | Packaging | Distroless nonroot `Dockerfile`, hardened systemd unit |
 
 Not yet implemented:
 
-- SQLite store, so `fresh` is always true.
-- Command applier: commands are answered `REJECTED/UNSUPPORTED`, which
-  acks the cloud's log.
+- Command kinds: each is rejected `UNSUPPORTED` until its applier and its
+  tables (roots, sources, downloads, inventory) land.
+- Queries, including `GetStatus`.
 - `policy.yaml`, and wiring SPKI pins into it.
 - Windows service wrapper (`x/sys/windows/svc`) and launchd plist.
 - Local control socket and the TUI.

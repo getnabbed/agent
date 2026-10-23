@@ -14,10 +14,12 @@ import (
 
 	"github.com/getnabbed/agent/internal/auth"
 	"github.com/getnabbed/agent/internal/clock"
+	"github.com/getnabbed/agent/internal/command"
 	"github.com/getnabbed/agent/internal/credstore"
 	"github.com/getnabbed/agent/internal/identity"
 	"github.com/getnabbed/agent/internal/link"
 	"github.com/getnabbed/agent/internal/lock"
+	statestore "github.com/getnabbed/agent/internal/store"
 	"github.com/getnabbed/agent/internal/tlsconf"
 	"github.com/getnabbed/agent/internal/version"
 )
@@ -239,13 +241,25 @@ func runRun(ctx context.Context, e *env, args []string) int {
 		return ExitError
 	}
 
+	state, err := statestore.Open(ctx, store.Dir(), creds.AgentID, e.log)
+	if err != nil {
+		e.log.Error("cannot open state database", "err", err)
+		return ExitError
+	}
+
+	defer func() { _ = state.Close() }()
+
+	applier := command.New(state, e.log)
+	applier.Prune(ctx)
+
 	lc, err := link.New(link.Config{
 		GatewayURL:           creds.GatewayURL,
 		TransportCredentials: credentials.NewTLS(tlsCfg),
 		Tokens:               tokens,
 		Signer:               id,
-		State:                link.StatelessState{},
-		Handler:              link.UnsupportedHandler{},
+		State:                state,
+		Handler:              applier,
+		Outbox:               state,
 		Clock:                clk,
 		Logger:               e.log,
 		Version:              version.Version,
@@ -272,7 +286,7 @@ func runRun(ctx context.Context, e *env, args []string) int {
 	}
 }
 
-func runStatus(_ context.Context, e *env, args []string) int {
+func runStatus(ctx context.Context, e *env, args []string) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(e.stderr)
 	if err := fs.Parse(args); err != nil {
@@ -311,6 +325,26 @@ func runStatus(_ context.Context, e *env, args []string) int {
 		creds.PairedAt.Format(time.RFC3339), refreshed, store.Dir())
 	if creds.PendingRefresh != nil {
 		fmt.Fprintf(e.stdout, "note:        a token refresh was interrupted at %s and will be retried\n", creds.PendingRefresh.StartedAt.Format(time.RFC3339))
+	}
+
+	sum, err := statestore.Inspect(ctx, store.Dir())
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		fmt.Fprintln(e.stdout, "state:       none yet (created on first run)")
+	case err != nil:
+		e.log.Warn("cannot read state database", "err", err)
+	default:
+		last := sum.LastCommandID
+		if last == "" {
+			last = "none"
+		}
+
+		fmt.Fprintf(e.stdout, "state:       schema v%d, %d commands applied, last %s, %d events pending\n",
+			sum.SchemaVersion, sum.AppliedCount, last, sum.PendingEvents)
+
+		if sum.AgentID != "" && sum.AgentID != creds.AgentID {
+			fmt.Fprintf(e.stdout, "note:        state belongs to previous agent %s and will be set aside on next run\n", sum.AgentID)
+		}
 	}
 
 	return ExitOK

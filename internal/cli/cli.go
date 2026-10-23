@@ -33,22 +33,22 @@ type env struct {
 	dataDir string
 }
 
-// command is a single subcommand.
-type command struct {
+// subcommand is one CLI verb.
+type subcommand struct {
 	name    string
 	summary string
 	run     func(ctx context.Context, e *env, args []string) int
 }
 
-var commands = map[string]command{}
+var commands = map[string]subcommand{}
 
-func register(c command) { commands[c.name] = c }
+func register(c subcommand) { commands[c.name] = c }
 
 func init() {
-	register(command{name: "version", summary: "Print version information", run: runVersion})
-	register(command{name: "pair", summary: "Pair this agent with your Nabbed account", run: runPair})
-	register(command{name: "run", summary: "Connect to the control plane and run (pairs first if needed)", run: runRun})
-	register(command{name: "status", summary: "Show pairing and identity details", run: runStatus})
+	register(subcommand{name: "version", summary: "Print version information", run: runVersion})
+	register(subcommand{name: "pair", summary: "Pair this agent with your Nabbed account", run: runPair})
+	register(subcommand{name: "run", summary: "Connect to the control plane and run (pairs first if needed)", run: runRun})
+	register(subcommand{name: "status", summary: "Show pairing and identity details", run: runStatus})
 }
 
 // Run executes the CLI with the given arguments (excluding the program name)

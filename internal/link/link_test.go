@@ -18,7 +18,9 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/getnabbed/agent/internal/auth"
+	"github.com/getnabbed/agent/internal/command"
 	"github.com/getnabbed/agent/internal/identity"
+	"github.com/getnabbed/agent/internal/store"
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
 
@@ -123,7 +125,7 @@ func ackHeartbeats(srv pb.AgentGatewayService_ConnectServer, onOther func(*pb.Ag
 	}
 }
 
-func start(t *testing.T, script func(int, pb.AgentGatewayService_ConnectServer) error) (*Client, *gateway, *fakeTokens) {
+func start(t *testing.T, script func(int, pb.AgentGatewayService_ConnectServer) error) (*Client, *gateway, *fakeTokens, *store.Store) {
 	t.Helper()
 	id, err := identity.Generate()
 	if err != nil {
@@ -137,11 +139,18 @@ func start(t *testing.T, script func(int, pb.AgentGatewayService_ConnectServer) 
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 
+	st, err := store.Open(context.Background(), t.TempDir(), "agent-1", slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = st.Close() })
+
 	toks := &fakeTokens{}
 	c, err := New(Config{
 		GatewayURL:  "http://localhost:1",
 		DialOptions: []grpc.DialOption{grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) })},
-		Tokens:      toks, Signer: id, State: StatelessState{}, Handler: UnsupportedHandler{},
+		Tokens:      toks, Signer: id, State: st, Handler: command.New(st, slog.New(slog.DiscardHandler)), Outbox: st,
 		Logger:  slog.New(slog.DiscardHandler),
 		Version: "test", OS: "test",
 		MinBackoff: time.Millisecond, MaxBackoff: 5 * time.Millisecond, HelloTimeout: time.Second,
@@ -152,7 +161,7 @@ func start(t *testing.T, script func(int, pb.AgentGatewayService_ConnectServer) 
 
 	t.Cleanup(func() { _ = c.Close() })
 
-	return c, g, toks
+	return c, g, toks, st
 }
 
 func nextConn(t *testing.T, g *gateway) connInfo {
@@ -168,7 +177,7 @@ func nextConn(t *testing.T, g *gateway) connInfo {
 
 func TestHandshakeCommandAndTokenExpiringReconnect(t *testing.T) {
 	results := make(chan *pb.CommandResult, 1)
-	c, g, _ := start(t, func(n int, srv pb.AgentGatewayService_ConnectServer) error {
+	c, g, _, _ := start(t, func(n int, srv pb.AgentGatewayService_ConnectServer) error {
 		if err := srv.Send(welcome(20)); err != nil {
 			return err
 		}
@@ -228,7 +237,7 @@ func TestHandshakeCommandAndTokenExpiringReconnect(t *testing.T) {
 }
 
 func TestRevokedStopsRun(t *testing.T) {
-	c, _, _ := start(t, func(_ int, srv pb.AgentGatewayService_ConnectServer) error {
+	c, _, _, _ := start(t, func(_ int, srv pb.AgentGatewayService_ConnectServer) error {
 		_ = srv.Send(welcome(1000))
 		return srv.Send(goAway(pb.GoAwayReason_GO_AWAY_REASON_REVOKED))
 	})
@@ -240,7 +249,7 @@ func TestRevokedStopsRun(t *testing.T) {
 }
 
 func TestMissedHeartbeatsReconnect(t *testing.T) {
-	c, g, _ := start(t, func(_ int, srv pb.AgentGatewayService_ConnectServer) error {
+	c, g, _, _ := start(t, func(_ int, srv pb.AgentGatewayService_ConnectServer) error {
 		_ = srv.Send(welcome(10))
 		for { // read but never ack
 			if _, err := srv.Recv(); err != nil {
@@ -256,7 +265,7 @@ func TestMissedHeartbeatsReconnect(t *testing.T) {
 }
 
 func TestUnauthenticatedInvalidatesToken(t *testing.T) {
-	c, g, toks := start(t, func(n int, srv pb.AgentGatewayService_ConnectServer) error {
+	c, g, toks, _ := start(t, func(n int, srv pb.AgentGatewayService_ConnectServer) error {
 		if n == 1 {
 			return status.Error(codes.Unauthenticated, "token expired")
 		}
@@ -291,50 +300,142 @@ func TestBackoffBounds(t *testing.T) {
 	}
 }
 
-func TestSendEventAndTelemetry(t *testing.T) {
-	got := make(chan *pb.AgentMessage, 8)
-	c, g, _ := start(t, func(_ int, srv pb.AgentGatewayService_ConnectServer) error {
-		_ = srv.Send(welcome(1000))
-		return ackHeartbeats(srv, func(m *pb.AgentMessage) { got <- m })
+func notice(code string) *pb.Event {
+	return &pb.Event{Kind: &pb.Event_AgentNotice{AgentNotice: &pb.AgentNotice{Code: code}}}
+}
+
+func enqueue(t *testing.T, st *store.Store, codes ...string) {
+	t.Helper()
+
+	err := st.Update(context.Background(), func(tx *store.Tx) error {
+		for _, code := range codes {
+			if _, err := tx.Enqueue(context.Background(), notice(code)); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	})
-	if err := c.SendEvent(context.Background(), "e1", &pb.Event{}); !errors.Is(err, ErrNotConnected) {
-		t.Fatalf("SendEvent before connect = %v, want ErrNotConnected", err)
+	if err != nil {
+		t.Fatal(err)
 	}
+}
+
+// Events queued while offline are sent in order on connect, events added
+// during the session follow, and acked events leave the outbox.
+func TestOutboxDeliveredInOrderAndDeletedOnAck(t *testing.T) {
+	got := make(chan string, 16)
+
+	c, g, _, st := start(t, func(_ int, srv pb.AgentGatewayService_ConnectServer) error {
+		_ = srv.Send(welcome(1000))
+
+		return ackHeartbeats(srv, func(m *pb.AgentMessage) {
+			if ev := m.GetEvent(); ev != nil {
+				got <- ev.GetAgentNotice().GetCode()
+
+				_ = srv.Send(&pb.ControlMessage{Kind: &pb.ControlMessage_EventAck{EventAck: &pb.EventAck{Ids: []string{m.GetHeader().GetId()}}}})
+			}
+		})
+	})
+
+	enqueue(t, st, "one", "two")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = c.Run(ctx) }()
-	nextConn(t, g)
-	var err error
-	for range 100 { // session becomes current just after Welcome
-		if err = c.SendEvent(ctx, "evt-1", &pb.Event{Kind: &pb.Event_AgentNotice{AgentNotice: &pb.AgentNotice{Code: "x"}}}); err == nil {
-			break
+
+	first := nextConn(t, g)
+	if first.hello.GetPendingEventCount() != 2 {
+		t.Fatalf("hello pending_event_count = %d, want 2", first.hello.GetPendingEventCount())
+	}
+
+	enqueue(t, st, "three")
+
+	for _, want := range []string{"one", "two", "three"} {
+		select {
+		case code := <-got:
+			if code != want {
+				t.Fatalf("got event %q, want %q", code, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for event %q", want)
+		}
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, _, pending, err := st.HelloState(context.Background())
+		if err == nil && pending == 0 {
+			return
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("outbox not drained after acks: pending=%d err=%v", pending, err)
 		}
 
 		time.Sleep(5 * time.Millisecond)
 	}
-	if err != nil {
-		t.Fatal(err)
+}
+
+// Events sent but not acked before the stream dies are resent next session.
+func TestUnackedEventsReplayedAfterReconnect(t *testing.T) {
+	type seen struct {
+		conn int
+		id   string
 	}
 
-	for i := range 3 {
-		c.SendTelemetry("progress/d1", &pb.Telemetry{Kind: &pb.Telemetry_DownloadProgress{DownloadProgress: &pb.DownloadProgress{DownloadId: "d1", Percent: float32(i)}}})
-	}
+	got := make(chan seen, 16)
 
-	deadline := time.After(5 * time.Second)
-	var sawEvent bool
-	for {
-		select {
-		case m := <-got:
-			if m.GetEvent() != nil && m.GetHeader().GetId() == "evt-1" {
-				sawEvent = true
+	c, g, _, st := start(t, func(n int, srv pb.AgentGatewayService_ConnectServer) error {
+		_ = srv.Send(welcome(1000))
+
+		for {
+			m, err := srv.Recv()
+			if err != nil {
+				return err
 			}
 
-			if p := m.GetTelemetry().GetDownloadProgress(); p != nil && p.GetPercent() == 2 && sawEvent {
-				return
+			if m.GetEvent() == nil {
+				continue
 			}
-		case <-deadline:
-			t.Fatal("did not receive event and latest telemetry value")
+
+			got <- seen{conn: n, id: m.GetHeader().GetId()}
+
+			if n == 1 {
+				return srv.Send(goAway(pb.GoAwayReason_GO_AWAY_REASON_DRAIN)) // drop without acking
+			}
 		}
+	})
+
+	enqueue(t, st, "only")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = c.Run(ctx) }()
+
+	nextConn(t, g)
+	a := <-got
+
+	nextConn(t, g)
+
+	select {
+	case b := <-got:
+		if b.conn != 2 || b.id != a.id {
+			t.Fatalf("replay = %+v, want same id %s on conn 2", b, a.id)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("unacked event was not replayed after reconnect")
+	}
+}
+
+func TestTelemetryLatestWins(t *testing.T) {
+	l := newLatest()
+	for i := range 3 {
+		l.put("progress/d1", &pb.AgentMessage{Kind: &pb.AgentMessage_Telemetry{Telemetry: &pb.Telemetry{Kind: &pb.Telemetry_DownloadProgress{DownloadProgress: &pb.DownloadProgress{Percent: float32(i)}}}}})
+	}
+
+	out := l.drain()
+	if len(out) != 1 || out[0].GetTelemetry().GetDownloadProgress().GetPercent() != 2 {
+		t.Fatalf("drain = %v, want only the latest value", out)
 	}
 }
