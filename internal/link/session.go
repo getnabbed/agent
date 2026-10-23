@@ -148,7 +148,8 @@ func (s *session) commandWorker(ctx context.Context) {
 		case cmd := <-s.commands:
 			cctx, cancel := ctx, context.CancelFunc(func() {})
 			if d := cmd.GetDeadlineMs(); d > 0 {
-				cctx, cancel = context.WithDeadline(ctx, time.UnixMilli(d))
+				// deadline_ms is control-plane time; convert to the host clock.
+				cctx, cancel = context.WithDeadline(ctx, time.UnixMilli(d).Add(-s.c.cfg.Clock.Offset()))
 			}
 
 			res := s.c.cfg.Handler.HandleCommand(cctx, cmd)

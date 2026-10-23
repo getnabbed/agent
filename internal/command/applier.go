@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/getnabbed/agent/internal/clock"
 	"github.com/getnabbed/agent/internal/store"
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
@@ -19,16 +20,22 @@ const resultRetention = 7 * 24 * time.Hour
 // Applier dispatches commands to their appliers inside a store transaction.
 type Applier struct {
 	store *store.Store
+	clock *clock.Clock
 	log   *slog.Logger
 }
 
-// New returns an Applier backed by s.
-func New(s *store.Store, log *slog.Logger) *Applier {
+// New returns an Applier backed by s. clk supplies control-plane-corrected
+// time for command deadlines; nil uses the host clock.
+func New(s *store.Store, clk *clock.Clock, log *slog.Logger) *Applier {
+	if clk == nil {
+		clk = clock.New()
+	}
+
 	if log == nil {
 		log = slog.Default()
 	}
 
-	return &Applier{store: s, log: log.With("component", "command")}
+	return &Applier{store: s, clock: clk, log: log.With("component", "command")}
 }
 
 // HandleCommand implements link.Handler. The state change and the recorded
@@ -52,17 +59,6 @@ func (a *Applier) HandleCommand(ctx context.Context, cmd *pb.Command) *pb.Comman
 	}
 
 	return res
-}
-
-// apply runs inside the command's transaction. No command kinds are
-// implemented yet; each is rejected as UNSUPPORTED, which is recorded so a
-// redelivery gets the same answer.
-func (a *Applier) apply(_ context.Context, _ *store.Tx, _ *pb.Command) (*pb.CommandResult, error) {
-	return &pb.CommandResult{
-		Outcome:   pb.CommandOutcome_COMMAND_OUTCOME_REJECTED,
-		ErrorCode: pb.CommandErrorCode_COMMAND_ERROR_CODE_UNSUPPORTED,
-		Message:   "this agent build does not implement this command yet",
-	}, nil
 }
 
 // HandleQuery implements link.Handler. Queries are read-only and never

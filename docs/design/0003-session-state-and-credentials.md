@@ -398,7 +398,7 @@ concurrently, and that is reuse. So:
 | `internal/link` | `Connect()` session: signed Hello, Welcome deadline, heartbeats, GoAway handling, backoff, ordered command worker, query pool, prioritised send lanes, clock offset |
 | `internal/tlsconf` | System roots plus `ca_file`, SPKI pins |
 | `internal/store` | SQLite (pure Go) with embedded migrations, agent-id binding, exactly-once `ApplyCommand` (state change and result in one transaction), outbox written in the same transaction as state changes, read-only `Inspect` |
-| `internal/command` | Applier implementing the link handler on the store. Every command kind is still rejected `UNSUPPORTED`, but the rejection is recorded and replayed. |
+| `internal/command` | Applier implementing the link handler on the store. Typed dispatch to one handler per command kind, grouped by domain (downloads, library, sources, settings), plus a deadline check. Every handler returns `REJECTED/UNSUPPORTED` "not implemented" for now; the rejection is recorded and replayed. A reflection test fails if a proto command kind has no handler. |
 | CLI | `pair`, `run` (auto-pairs), `status`, exit code 3 for re-pair |
 | Packaging | Distroless nonroot `Dockerfile`, hardened systemd unit |
 

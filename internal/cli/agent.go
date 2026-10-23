@@ -249,7 +249,7 @@ func runRun(ctx context.Context, e *env, args []string) int {
 
 	defer func() { _ = state.Close() }()
 
-	applier := command.New(state, e.log)
+	applier := command.New(state, clk, e.log)
 	applier.Prune(ctx)
 
 	lc, err := link.New(link.Config{

@@ -150,7 +150,7 @@ func start(t *testing.T, script func(int, pb.AgentGatewayService_ConnectServer) 
 	c, err := New(Config{
 		GatewayURL:  "http://localhost:1",
 		DialOptions: []grpc.DialOption{grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) })},
-		Tokens:      toks, Signer: id, State: st, Handler: command.New(st, slog.New(slog.DiscardHandler)), Outbox: st,
+		Tokens:      toks, Signer: id, State: st, Handler: command.New(st, nil, slog.New(slog.DiscardHandler)), Outbox: st,
 		Logger:  slog.New(slog.DiscardHandler),
 		Version: "test", OS: "test",
 		MinBackoff: time.Millisecond, MaxBackoff: 5 * time.Millisecond, HelloTimeout: time.Second,
