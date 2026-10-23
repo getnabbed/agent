@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -307,4 +308,18 @@ func mustIdentity(t *testing.T, store *credstore.Store) *identity.Identity {
 	}
 
 	return id
+}
+
+func TestVerificationURIMustBeAbsolute(t *testing.T) {
+	api, _ := url.Parse("https://api.nabbed.media")
+
+	err := ValidateVerificationURI(api, "/device")
+	if err == nil || !strings.Contains(err.Error(), "not absolute") {
+		t.Fatalf("err = %v, want a clear not-absolute error", err)
+	}
+
+	// What the server should send: the web app on the same site.
+	if err := ValidateVerificationURI(api, "https://app.nabbed.media/device"); err != nil {
+		t.Fatalf("absolute app URL rejected: %v", err)
+	}
 }

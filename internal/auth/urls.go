@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"unicode"
 
 	"golang.org/x/net/publicsuffix"
 )
@@ -67,8 +68,14 @@ func ValidateGatewayURL(api *url.URL, raw string) (*url.URL, error) {
 // a compromised token endpoint cannot send the user to a phishing page.
 func ValidateVerificationURI(api *url.URL, raw string) error {
 	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || u.User != nil {
-		return fmt.Errorf("invalid verification uri")
+	if err != nil || u.User != nil {
+		return fmt.Errorf("invalid verification uri %q", printable(raw))
+	}
+
+	if !u.IsAbs() || u.Host == "" {
+		// The agent cannot guess which host serves the page: it is often the
+		// web app, not the API. RFC 8628 section 3.2 requires an absolute URI.
+		return fmt.Errorf("verification uri %q is not absolute; the server must send a full https:// URL (RFC 8628 section 3.2)", printable(raw))
 	}
 
 	if err := checkScheme(u); err != nil {
@@ -131,4 +138,22 @@ func IsLoopback(host string) bool {
 	ip := net.ParseIP(host)
 
 	return ip != nil && ip.IsLoopback()
+}
+
+// printable makes a server-supplied value safe to show in an error: no
+// control or format characters, bounded length.
+func printable(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return '?'
+		}
+
+		return r
+	}, s)
+
+	if len(s) > 200 {
+		s = s[:200] + "..."
+	}
+
+	return s
 }
