@@ -32,6 +32,8 @@ type fakeAPI struct {
 	seq          int
 	dropNext     bool // simulate the response being lost after rotation
 	refreshes    int
+	omitGateway  bool // answer the token poll without gateway_url
+	numericIDs   bool // send tenant_id as a JSON number, as cloud-api does
 }
 
 func newFakeAPI(t *testing.T) *fakeAPI {
@@ -96,7 +98,17 @@ func (f *fakeAPI) token(w http.ResponseWriter, r *http.Request) {
 	}
 
 	f.current = fmt.Sprintf("rt-%d", f.seq)
-	writeJSON(w, 200, TokenResponse{AgentID: "agent-1", TenantID: "tenant-1", AccessToken: f.jwt(), RefreshToken: f.current, GatewayURL: "https://gw.example"})
+	gw := "https://gw.example"
+	if f.omitGateway {
+		gw = ""
+	}
+
+	if f.numericIDs {
+		writeJSON(w, 200, map[string]any{"agent_id": "agent-1", "tenant_id": 42, "access_token": f.jwt(), "refresh_token": f.current, "gateway_url": gw})
+		return
+	}
+
+	writeJSON(w, 200, TokenResponse{AgentID: "agent-1", TenantID: "tenant-1", AccessToken: f.jwt(), RefreshToken: f.current, GatewayURL: gw})
 }
 
 func (f *fakeAPI) refresh(w http.ResponseWriter, r *http.Request) {

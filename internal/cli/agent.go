@@ -111,6 +111,7 @@ func pair(ctx context.Context, e *env, store *credstore.Store, f connFlags) (*cr
 		ClientName: f.name,
 		OS:         osString(),
 		Version:    version.Version,
+		Log:        e.log,
 		Prompt: func(ar *auth.AuthorizeResponse) {
 			uri := ar.VerificationURI
 			if ar.VerificationURIComplete != "" {
@@ -134,7 +135,7 @@ func pair(ctx context.Context, e *env, store *credstore.Store, f connFlags) (*cr
 	}
 
 	creds := &credstore.Credentials{
-		AgentID: tr.AgentID, TenantID: tr.TenantID,
+		AgentID: string(tr.AgentID), TenantID: string(tr.TenantID),
 		APIURL: api.String(), GatewayURL: gw.String(),
 		SignSeed: id.SignSeed(), SealKey: id.SealKey(),
 		RefreshToken: tr.RefreshToken,

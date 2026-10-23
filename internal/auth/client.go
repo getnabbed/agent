@@ -12,10 +12,17 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 )
 
 const maxResponseBytes = 1 << 20
+
+// ErrBadResponse means cloud-api answered with success but the body was not
+// usable: undecodable, missing fields or invalid values. Retrying the same
+// request will not fix it.
+var ErrBadResponse = errors.New("cloud-api: unusable response")
 
 // OAuth grant types sent to cloud-api.
 const (
@@ -101,11 +108,37 @@ type AuthorizeResponse struct {
 
 // TokenResponse is the success body of POST /api/device/token.
 type TokenResponse struct {
-	AgentID      string `json:"agent_id"`
-	TenantID     string `json:"tenant_id"`
+	AgentID      WireID `json:"agent_id"`
+	TenantID     WireID `json:"tenant_id"`
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	GatewayURL   string `json:"gateway_url"`
+}
+
+// WireID is a cloud-issued id. cloud-api may send it as a JSON string or as a
+// whole number; both decode to the same decimal string.
+type WireID string
+
+// UnmarshalJSON accepts a string or an integer.
+func (w *WireID) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*w = WireID(s)
+		return nil
+	}
+
+	var n json.Number
+	if err := json.Unmarshal(b, &n); err != nil {
+		return fmt.Errorf("id must be a string or integer: %w", err)
+	}
+
+	if _, err := n.Int64(); err != nil {
+		return fmt.Errorf("id must be a whole number, got %s", n)
+	}
+
+	*w = WireID(n.String())
+
+	return nil
 }
 
 // RefreshRequest is the body of POST /api/device/refresh. Signature is
@@ -147,12 +180,15 @@ func (c *Client) Token(ctx context.Context, deviceCode string) (*TokenResponse, 
 		return nil, err
 	}
 
-	if out.AgentID == "" || out.AccessToken == "" || out.RefreshToken == "" || out.GatewayURL == "" {
-		return nil, errors.New("cloud-api: incomplete token response")
+	if missing := missingFields(map[string]string{
+		"agent_id": string(out.AgentID), "access_token": out.AccessToken,
+		"refresh_token": out.RefreshToken, "gateway_url": out.GatewayURL,
+	}); missing != "" {
+		return nil, fmt.Errorf("%w: token response is missing %s", ErrBadResponse, missing)
 	}
 
-	if !validID(out.AgentID) || !validID(out.TenantID) {
-		return nil, errors.New("cloud-api: agent_id and tenant_id must be 1-64 letters, digits, - or _")
+	if !validID(string(out.AgentID)) || !validID(string(out.TenantID)) {
+		return nil, fmt.Errorf("%w: agent_id and tenant_id must be 1-64 letters, digits, - or _", ErrBadResponse)
 	}
 
 	return &out, nil
@@ -168,7 +204,7 @@ func (c *Client) Refresh(ctx context.Context, req RefreshRequest) (*RefreshRespo
 	}
 
 	if out.AccessToken == "" || out.RefreshToken == "" {
-		return nil, errors.New("cloud-api: incomplete refresh response")
+		return nil, fmt.Errorf("%w: refresh response is missing access_token or refresh_token", ErrBadResponse)
 	}
 
 	return &out, nil
@@ -214,7 +250,7 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	}
 
 	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("cloud-api %s: decode response: %w", path, err)
+		return fmt.Errorf("%w: %s: decode: %w", ErrBadResponse, path, err)
 	}
 
 	return nil
@@ -225,3 +261,18 @@ var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 // validID reports whether a cloud-issued id is safe to store and to use in
 // file names.
 func validID(s string) bool { return idPattern.MatchString(s) }
+
+// missingFields returns the sorted, comma-separated names of empty fields.
+// Only names are returned, never values, so it is safe to log.
+func missingFields(fields map[string]string) string {
+	var names []string
+	for name, v := range fields {
+		if v == "" {
+			names = append(names, name)
+		}
+	}
+
+	slices.Sort(names)
+
+	return strings.Join(names, ", ")
+}

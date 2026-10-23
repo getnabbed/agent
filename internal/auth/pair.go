@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"regexp"
 	"time"
@@ -27,6 +28,8 @@ type PairOptions struct {
 	Prompt func(*AuthorizeResponse)
 	// Sleep waits between polls; nil uses a context-aware timer.
 	Sleep func(context.Context, time.Duration) error
+	// Log receives poll progress; nil uses slog.Default().
+	Log *slog.Logger
 }
 
 // Pair runs the RFC 8628 device flow for id and returns the issued tokens.
@@ -34,6 +37,10 @@ type PairOptions struct {
 func Pair(ctx context.Context, c *Client, id *identity.Identity, o PairOptions) (*TokenResponse, error) {
 	if o.Sleep == nil {
 		o.Sleep = sleepCtx
+	}
+
+	if o.Log == nil {
+		o.Log = slog.Default()
 	}
 
 	ar, err := c.Authorize(ctx, AuthorizeRequest{
@@ -69,14 +76,24 @@ func Pair(ctx context.Context, c *Client, id *identity.Identity, o PairOptions) 
 
 		tr, err := c.Token(ctx, ar.DeviceCode)
 		if err == nil {
+			o.Log.Debug("pairing approved")
 			return tr, nil
+		}
+
+		// The cloud answered with success but the body is unusable. The device
+		// code is probably spent, so polling again would hang forever.
+		if errors.Is(err, ErrBadResponse) {
+			return nil, fmt.Errorf("pairing approved but %w", err)
 		}
 
 		var apiErr *APIError
 		if !errors.As(err, &apiErr) {
 			// Network trouble: keep polling until the code expires.
+			o.Log.Warn("pairing poll failed; retrying", "err", err)
 			continue
 		}
+
+		o.Log.Debug("pairing poll", "status", apiErr.Status, "code", apiErr.Code)
 
 		switch apiErr.Code {
 		case "authorization_pending":

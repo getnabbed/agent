@@ -44,7 +44,7 @@ func pairForTest(t *testing.T, f *fakeAPI) (*TokenSource, *credstore.Store, *ide
 		t.Fatal(err)
 	}
 
-	creds := &credstore.Credentials{AgentID: tr.AgentID, TenantID: tr.TenantID, APIURL: f.srv.URL, GatewayURL: tr.GatewayURL,
+	creds := &credstore.Credentials{AgentID: string(tr.AgentID), TenantID: string(tr.TenantID), APIURL: f.srv.URL, GatewayURL: tr.GatewayURL,
 		SignSeed: id.SignSeed(), SealKey: id.SealKey(), RefreshToken: tr.RefreshToken, PairedAt: time.Now()}
 	if err := store.Save(creds); err != nil {
 		t.Fatal(err)
@@ -321,5 +321,64 @@ func TestVerificationURIMustBeAbsolute(t *testing.T) {
 	// What the server should send: the web app on the same site.
 	if err := ValidateVerificationURI(api, "https://app.nabbed.media/device"); err != nil {
 		t.Fatalf("absolute app URL rejected: %v", err)
+	}
+}
+
+func TestPairFailsFastOnUnusableTokenResponse(t *testing.T) {
+	f := newFakeAPI(t)
+	f.omitGateway = true
+
+	id, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	polls := 0
+	sleep := func(context.Context, time.Duration) error {
+		polls++
+		if polls > 3 {
+			t.Fatal("still polling after the cloud approved with an unusable response")
+		}
+
+		return nil
+	}
+
+	c := NewClient(f.url(), f.srv.Client(), "test")
+
+	_, err = Pair(context.Background(), c, id, PairOptions{ClientName: "t", Sleep: sleep, Log: quiet})
+	if !errors.Is(err, ErrBadResponse) {
+		t.Fatalf("got err = %v, want ErrBadResponse", err)
+	}
+
+	if !strings.Contains(err.Error(), "gateway_url") {
+		t.Fatalf("got err = %v, want it to name gateway_url", err)
+	}
+}
+
+func TestTokenAcceptsNumericTenantID(t *testing.T) {
+	f := newFakeAPI(t)
+	f.numericIDs = true
+
+	id, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewClient(f.url(), f.srv.Client(), "test")
+
+	tr, err := Pair(context.Background(), c, id, PairOptions{ClientName: "t", Sleep: noSleep, Log: quiet})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if tr.TenantID != "42" {
+		t.Fatalf("got TenantID = %q, want %q", tr.TenantID, "42")
+	}
+}
+
+func TestWireIDRejectsFractions(t *testing.T) {
+	var w WireID
+	if err := w.UnmarshalJSON([]byte("4.5")); err == nil {
+		t.Fatalf("got WireID = %q, want an error", w)
 	}
 }
