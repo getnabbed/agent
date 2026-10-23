@@ -8,10 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"sort"
 
+	"github.com/getnabbed/agent/internal/config"
 	"github.com/getnabbed/agent/internal/logging"
-	"github.com/getnabbed/agent/internal/paths"
 	"github.com/getnabbed/agent/internal/version"
 )
 
@@ -30,6 +31,7 @@ type env struct {
 	stdout  io.Writer
 	stderr  io.Writer
 	log     *slog.Logger
+	cfg     *config.Config
 	dataDir string
 }
 
@@ -49,6 +51,7 @@ func init() {
 	register(subcommand{name: "pair", summary: "Pair this agent with your Nabbed account", run: runPair})
 	register(subcommand{name: "run", summary: "Connect to the control plane and run (pairs first if needed)", run: runRun})
 	register(subcommand{name: "status", summary: "Show pairing and identity details", run: runStatus})
+	register(subcommand{name: "config", summary: "Print the effective configuration (secrets redacted)", run: runConfig})
 }
 
 // Run executes the CLI with the given arguments (excluding the program name)
@@ -58,10 +61,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	fs.Usage = func() { printUsage(stderr) }
 
+	// Global flags default to "" so that only flags the user actually set
+	// override the config file and environment.
 	showVersion := fs.Bool("version", false, "print version information and exit")
-	logLevel := fs.String("log-level", "info", "minimum log level: debug, info, warn, error")
-	logFormat := fs.String("log-format", "auto", "log output format: auto, json, text")
-	dataDir := fs.String("data-dir", paths.DefaultDataDir(), "directory for credentials and state")
+	configPath := fs.String("config", "", "config file (env "+config.EnvConfig+")")
+	logLevel := fs.String("log-level", "", "minimum log level: debug, info, warn, error")
+	logFormat := fs.String("log-format", "", "log output format: auto, json, text")
+	dataDir := fs.String("data-dir", "", "directory for credentials and state")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -75,17 +81,30 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runVersion(ctx, &env{stdout: stdout, stderr: stderr, log: slog.Default()}, nil)
 	}
 
-	level, err := logging.ParseLevel(*logLevel)
+	cfg, src, err := config.Load(*configPath, os.Getenv)
 	if err != nil {
 		fmt.Fprintf(stderr, "agent: %v\n", err)
 		return ExitUsage
 	}
 
-	format, err := logging.ParseFormat(*logFormat)
-	if err != nil {
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "log-level":
+			cfg.Log.Level = *logLevel
+		case "log-format":
+			cfg.Log.Format = *logFormat
+		case "data-dir":
+			cfg.DataDir = *dataDir
+		}
+	})
+
+	if err := cfg.Finish(); err != nil {
 		fmt.Fprintf(stderr, "agent: %v\n", err)
 		return ExitUsage
 	}
+
+	level, _ := logging.ParseLevel(cfg.Log.Level)
+	format, _ := logging.ParseFormat(cfg.Log.Format)
 
 	logger := logging.New(logging.Options{
 		Format:    format,
@@ -95,7 +114,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	})
 	slog.SetDefault(logger)
 
-	e := &env{stdout: stdout, stderr: stderr, log: logger, dataDir: *dataDir}
+	e := &env{stdout: stdout, stderr: stderr, log: logger, cfg: cfg, dataDir: cfg.DataDir}
+	e.log.Debug("configuration", "file", src.Path, "file_loaded", src.Loaded)
 
 	rest := fs.Args()
 	if len(rest) == 0 {
@@ -145,10 +165,22 @@ func printUsage(w io.Writer) {
 	fmt.Fprintf(w, "  %-10s %s\n", "help", "Show this help")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Flags:")
-	fmt.Fprintln(w, "  --data-dir <dir>       Credentials and state directory (env NABBED_AGENT_DATA_DIR)")
+	fmt.Fprintln(w, "  --config <file>        Config file (env NABBED_CONFIG)")
+	fmt.Fprintln(w, "  --data-dir <dir>       Credentials and state directory (env NABBED_DATA_DIR)")
 	fmt.Fprintln(w, "  --log-level <level>    Minimum log level: debug, info, warn, error (default info)")
 	fmt.Fprintln(w, "  --log-format <format>  Log output format: auto, json, text (default auto)")
 	fmt.Fprintln(w, "  --version              Print version information and exit")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Run 'agent <command> -h' for command flags.")
+}
+
+func runConfig(_ context.Context, e *env, args []string) int {
+	if len(args) > 0 {
+		fmt.Fprintln(e.stderr, "usage: agent config")
+		return ExitUsage
+	}
+
+	fmt.Fprint(e.stdout, e.cfg.Redacted())
+
+	return ExitOK
 }

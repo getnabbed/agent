@@ -15,6 +15,7 @@ import (
 	"github.com/getnabbed/agent/internal/auth"
 	"github.com/getnabbed/agent/internal/clock"
 	"github.com/getnabbed/agent/internal/command"
+	"github.com/getnabbed/agent/internal/config"
 	"github.com/getnabbed/agent/internal/credstore"
 	"github.com/getnabbed/agent/internal/identity"
 	"github.com/getnabbed/agent/internal/link"
@@ -24,19 +25,18 @@ import (
 	"github.com/getnabbed/agent/internal/version"
 )
 
-const envAPIURL = "NABBED_API_URL"
-
 type connFlags struct {
 	apiURL string
 	name   string
 	caFile string
 }
 
-func (f *connFlags) register(fs *flag.FlagSet) {
-	host, _ := os.Hostname()
-	fs.StringVar(&f.apiURL, "api-url", os.Getenv(envAPIURL), "Nabbed API base URL (env "+envAPIURL+")")
-	fs.StringVar(&f.name, "name", host, "name shown for this agent in the web app")
-	fs.StringVar(&f.caFile, "ca-file", "", "extra PEM CA bundle for self-hosted control planes")
+// register binds the flags with defaults from the resolved config, so a
+// flag overrides the file and environment only when given.
+func (f *connFlags) register(fs *flag.FlagSet, cfg *config.Config) {
+	fs.StringVar(&f.apiURL, "api-url", cfg.APIURL, "Nabbed API base URL (env NABBED_API_URL)")
+	fs.StringVar(&f.name, "name", cfg.Name, "name shown for this agent in the web app (env NABBED_NAME)")
+	fs.StringVar(&f.caFile, "ca-file", cfg.TLS.CAFile, "extra PEM CA bundle for self-hosted control planes (env NABBED_CA_FILE)")
 }
 
 func userAgent() string {
@@ -79,7 +79,7 @@ func httpClient(caFile string) (*http.Client, error) {
 // credentials and the initial access token.
 func pair(ctx context.Context, e *env, store *credstore.Store, f connFlags) (*credstore.Credentials, string, error) {
 	if f.apiURL == "" {
-		return nil, "", fmt.Errorf("--api-url (or %s) is required to pair", envAPIURL)
+		return nil, "", errors.New("--api-url (or NABBED_API_URL, or api_url in the config file) is required to pair")
 	}
 
 	api, err := auth.ParseAPIURL(f.apiURL)
@@ -146,7 +146,7 @@ func runPair(ctx context.Context, e *env, args []string) int {
 	fs := flag.NewFlagSet("pair", flag.ContinueOnError)
 	fs.SetOutput(e.stderr)
 	var f connFlags
-	f.register(fs)
+	f.register(fs, e.cfg)
 	force := fs.Bool("force", false, "replace existing credentials with a new identity")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
@@ -181,10 +181,10 @@ func runRun(ctx context.Context, e *env, args []string) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(e.stderr)
 	var f connFlags
-	f.register(fs)
+	f.register(fs, e.cfg)
 
 	var rf runFlags
-	rf.register(fs, e.dataDir)
+	rf.register(fs, e.cfg)
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}

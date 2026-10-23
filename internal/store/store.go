@@ -116,6 +116,9 @@ func open(ctx context.Context, path string, log *slog.Logger) (*Store, error) {
 	q.Add("_pragma", "synchronous(FULL)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "busy_timeout(5000)")
+	// Keep temporary tables and sort spills in memory: the container root is
+	// read-only and /tmp may not exist.
+	q.Add("_pragma", "temp_store(MEMORY)")
 	q.Set("_txlock", "immediate")
 
 	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?"+q.Encode())
