@@ -8,7 +8,7 @@ LDFLAGS  := -s -w \
 	-X $(MODULE)/internal/version.Commit=$(COMMIT) \
 	-X $(MODULE)/internal/version.Date=$(DATE)
 
-.PHONY: all build install test lint fmt vet tidy clean proto proto-lint
+.PHONY: all build install test lint fmt vet tidy clean proto proto-lint vuln docker snapshot
 
 all: lint test build
 
@@ -30,6 +30,16 @@ proto:
 proto-lint:
 	buf lint
 	buf format --diff --exit-code
+
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+docker:
+	docker buildx build --load -t nabbed-agent:dev \
+		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg DATE=$(DATE) .
+
+snapshot:
+	go run github.com/goreleaser/goreleaser/v2@v2.19.0 release --snapshot --clean --skip=publish,sign,docker
 
 fmt:
 	gofmt -s -w .

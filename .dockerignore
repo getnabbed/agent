@@ -1,4 +1,9 @@
-.git
-bin
-dist
-*.test
+# Build context for `docker build .`: source only.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!pkg/
+**/*_test.go
+**/testdata/

@@ -1,10 +1,7 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 version: 2
 
 project_name: agent
-
-before:
-  hooks:
-    - go mod tidy
 
 builds:
   - id: agent
@@ -12,20 +9,24 @@ builds:
     binary: agent
     env:
       - CGO_ENABLED=0
+      - GOTOOLCHAIN=local
     flags:
       - -trimpath
+    # Reproducible: timestamps come from the commit, not the build machine.
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - -s -w
       - -X github.com/getnabbed/agent/internal/version.Version={{ .Version }}
-      - -X github.com/getnabbed/agent/internal/version.Commit={{ .Commit }}
-      - -X github.com/getnabbed/agent/internal/version.Date={{ .Date }}
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
+      - -X github.com/getnabbed/agent/internal/version.Commit={{ .FullCommit }}
+      - -X github.com/getnabbed/agent/internal/version.Date={{ .CommitDate }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64, arm]
+    goarm: ["7"]
+    ignore:
+      - goos: darwin
+        goarch: arm
+      - goos: windows
+        goarch: arm
 
 archives:
   - id: default
@@ -36,9 +37,58 @@ archives:
     files:
       - LICENSE
       - README.md
+      - contrib/agent.example.yaml
+      - contrib/systemd/nabbed-agent.service
 
 checksum:
   name_template: checksums.txt
+
+# SPDX SBOM per archive (syft).
+sboms:
+  - artifacts: archive
+
+# Keyless signing with the workflow's GitHub OIDC identity. Verify with:
+#   cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
+#     --certificate-identity-regexp 'https://github.com/getnabbed/agent/' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args: ["sign-blob", "--bundle=${signature}", "${artifact}", "--yes"]
+
+dockers_v2:
+  - id: agent
+    ids: [agent]
+    dockerfile: release.Dockerfile
+    images:
+      - ghcr.io/getnabbed/agent
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}{{ end }}"
+      - "{{ if not .Prerelease }}{{ .Major }}{{ end }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+      - linux/arm/v7
+    sbom: "true"
+    labels:
+      org.opencontainers.image.title: nabbed-agent
+      org.opencontainers.image.description: Nabbed download agent
+      org.opencontainers.image.source: https://github.com/getnabbed/agent
+      org.opencontainers.image.licenses: MIT
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .CommitDate }}"
+
+# Signs the pushed multi-arch images by digest. Verify with:
+#   cosign verify ghcr.io/getnabbed/agent:latest \
+#     --certificate-identity-regexp 'https://github.com/getnabbed/agent/' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+docker_signs:
+  - cmd: cosign
+    args: ["sign", "${artifact}@${digest}", "--yes"]
 
 changelog:
   use: github
@@ -53,3 +103,4 @@ release:
   github:
     owner: getnabbed
     name: agent
+  prerelease: auto

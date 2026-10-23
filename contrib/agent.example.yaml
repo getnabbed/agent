@@ -1,0 +1,39 @@
+# Nabbed agent configuration. Every key is optional.
+#
+# Precedence, lowest to highest: built-in defaults, this file, NABBED_*
+# environment variables, command-line flags. Unknown keys are an error, so
+# typos fail loudly.
+#
+# Keep this file owned by you and read-only to the agent: it will also hold
+# the local policy (allowed library roots, limits) that the cloud cannot
+# override.
+
+# Your Nabbed API. Needed only to pair; afterwards it is stored with the
+# agent's credentials.
+api_url: https://api.nabbed.example
+
+# Name shown for this agent in the web app. Defaults to the hostname.
+# name: living-room-nas
+
+# Credentials, state database and (by default) downloads.
+# data_dir: /data
+
+log:
+  level: info   # debug, info, warn, error
+  format: auto  # auto (text on a terminal, JSON otherwise), json, text
+
+# tls:
+#   ca_file: /config/ca.pem   # extra CA bundle for a self-hosted control plane
+
+downloads:
+  # dir: /downloads           # defaults to <data_dir>/downloads
+  max_concurrent: 3
+
+torrent:
+  port: 6881                  # 0 picks a free port; forward it for better speeds
+
+# usenet:
+#   # TEMPORARY until providers are configured in the web app and sealed to
+#   # this agent. Prefer NABBED_NNTP_FILE pointing at a secret over putting
+#   # the password here.
+#   provider: nntps://user:password@news.example.com:563?connections=8

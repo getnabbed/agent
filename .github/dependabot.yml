@@ -4,7 +4,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      go-minor:
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  # Bumps the digest-pinned base images in both Dockerfiles.
+  - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly

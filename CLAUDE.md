@@ -12,7 +12,13 @@ make test         # go test -race -cover ./...
 make lint         # golangci-lint (config in .golangci.yml)
 make proto        # regenerate pkg/proto from proto/ with buf
 make proto-lint   # buf lint + format check
+make vuln         # govulncheck on code paths the agent calls
+make docker       # build the container image from source
+make snapshot     # unsigned GoReleaser build of every release archive
 ```
+
+Base images are pinned by digest in literal `FROM` lines (Dependabot updates
+them); GitHub Actions are pinned by commit SHA. Keep it that way.
 
 Generated code in `pkg/proto/` is committed and never edited by hand. Change
 `proto/` and run `make proto`.

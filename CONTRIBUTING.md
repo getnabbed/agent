@@ -5,7 +5,7 @@ Thanks for your interest in contributing to `agent`.
 ## Getting started
 
 1. Fork and clone the repository.
-2. Install Go 1.26 or newer and [golangci-lint](https://golangci-lint.run/).
+2. Install Go 1.27.3 or newer and [golangci-lint](https://golangci-lint.run/).
 3. Run `make all` to lint, test and build.
 
 ## Making changes

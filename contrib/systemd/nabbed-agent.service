@@ -2,7 +2,8 @@
 #
 #   install -m 0755 agent /usr/local/bin/nabbed-agent
 #   install -m 0644 nabbed-agent.service /etc/systemd/system/
-#   systemctl edit nabbed-agent   # set NABBED_API_URL, add ReadWritePaths for media
+#   install -m 0644 agent.example.yaml /etc/nabbed-agent/agent.yaml   # optional
+#   systemctl edit nabbed-agent   # or set NABBED_API_URL, add ReadWritePaths for media
 #   systemctl enable --now nabbed-agent
 #   journalctl -u nabbed-agent    # the pairing code appears here on first start
 
@@ -16,6 +17,8 @@ StartLimitBurst=10
 
 [Service]
 Type=exec
+# Optional config file, read-only to the agent under ProtectSystem=strict.
+Environment=NABBED_CONFIG=/etc/nabbed-agent/agent.yaml
 ExecStart=/usr/local/bin/nabbed-agent --data-dir ${STATE_DIRECTORY} --log-format json run
 Restart=on-failure
 RestartSec=5s

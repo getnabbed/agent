@@ -1,0 +1,43 @@
+# Nabbed agent with Docker Compose:
+#
+#   docker compose up -d
+#   docker compose logs -f agent   # shows the pairing code on first start
+#
+# Set NABBED_API_URL below (or api_url in config/agent.yaml).
+name: nabbed
+
+services:
+  agent:
+    image: ghcr.io/getnabbed/agent:latest
+    restart: unless-stopped
+    environment:
+      NABBED_API_URL: https://api.nabbed.example
+      # NABBED_LOG_LEVEL: debug
+      # Usenet provider, temporary until set from the web app:
+      # NABBED_NNTP_FILE: /run/secrets/nntp
+    volumes:
+      - data:/data                      # credentials and state: must persist
+      - ./downloads:/downloads          # in-progress and completed downloads
+      - ./config:/config:ro             # optional agent.yaml, read-only
+    ports:
+      - "6881:6881/tcp"                 # BitTorrent peers (optional, faster)
+      - "6881:6881/udp"
+    # Hardening: the agent needs no privileges and writes only to its volumes.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # Bind-mounted ./downloads must be writable by this user. Either
+    # `sudo chown -R 65532:65532 downloads` or run as your own uid:
+    # user: "1000:1000"
+    # secrets: [nntp]
+    stop_grace_period: 30s
+
+volumes:
+  data:
+
+# secrets:
+#   nntp:
+#     file: ./nntp.secret
