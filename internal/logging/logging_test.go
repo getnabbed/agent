@@ -17,6 +17,7 @@ func TestParseFormat(t *testing.T) {
 			t.Errorf("ParseFormat(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
+
 	if _, err := ParseFormat("yaml"); err == nil {
 		t.Error("ParseFormat(\"yaml\") expected error")
 	}
@@ -27,12 +28,14 @@ func TestParseLevel(t *testing.T) {
 		"debug": slog.LevelDebug, "INFO": slog.LevelInfo,
 		"warn": slog.LevelWarn, "error": slog.LevelError, "warn+2": slog.LevelWarn + 2,
 	}
+
 	for in, want := range cases {
 		got, err := ParseLevel(in)
 		if err != nil || got != want {
 			t.Errorf("ParseLevel(%q) = %v, %v; want %v", in, got, err, want)
 		}
 	}
+
 	if _, err := ParseLevel("loud"); err == nil {
 		t.Error("ParseLevel(\"loud\") expected error")
 	}
@@ -47,9 +50,11 @@ func TestNewJSON(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
 		t.Fatalf("output is not JSON: %v\n%s", err, buf.String())
 	}
+
 	if rec["msg"] != "hello" || rec["n"] != float64(1) {
 		t.Errorf("unexpected record: %v", rec)
 	}
+
 	if g, ok := rec["g"].(map[string]any); !ok || g["k"] != "v" {
 		t.Errorf("group not nested: %v", rec)
 	}

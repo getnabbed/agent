@@ -12,13 +12,16 @@ func TestRoundTripSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	id2, err := FromSecrets(id.SignSeed(), id.SealKey())
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !bytes.Equal(id.SignPublic(), id2.SignPublic()) || !bytes.Equal(id.SealPublic(), id2.SealPublic()) {
 		t.Fatal("public keys differ after round trip")
 	}
+
 	msg := []byte("hello")
 	if !Verify(id2.SignPublic(), msg, id.Sign(msg)) {
 		t.Fatal("signature from original does not verify with restored key")
@@ -29,6 +32,7 @@ func TestFromSecretsRejectsBadLengths(t *testing.T) {
 	if _, err := FromSecrets(make([]byte, 31), make([]byte, 32)); err == nil {
 		t.Error("expected error for short seed")
 	}
+
 	if _, err := FromSecrets(make([]byte, 32), make([]byte, 31)); err == nil {
 		t.Error("expected error for short x25519 key")
 	}
@@ -49,6 +53,7 @@ func TestSigningInputsAreUnambiguous(t *testing.T) {
 	if bytes.Equal(a, b) {
 		t.Fatal("hello signing input is ambiguous across field boundaries")
 	}
+
 	if bytes.Equal(HelloSigningInput("j", "i", 1), RefreshSigningInput("j", "i", 1, "")) {
 		t.Fatal("hello and refresh inputs collide")
 	}
@@ -62,6 +67,7 @@ func TestHelloSigningInputLayout(t *testing.T) {
 		0, 0, 0, 1, 'i',
 		0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 1, 2,
 	}
+
 	if !bytes.Equal(got, want) {
 		t.Fatalf("layout mismatch:\n got %v\nwant %v", got, want)
 	}

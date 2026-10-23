@@ -25,25 +25,30 @@ func DefaultDataDir() string {
 	if d := os.Getenv(EnvDataDir); d != "" {
 		return d
 	}
+
 	home, _ := os.UserHomeDir()
 	switch runtime.GOOS {
 	case "windows":
 		if d := os.Getenv("LOCALAPPDATA"); d != "" {
 			return filepath.Join(d, "Nabbed", "Agent")
 		}
+
 		return filepath.Join(home, "AppData", "Local", "Nabbed", "Agent")
 	case "darwin":
 		if os.Geteuid() == 0 {
 			return "/Library/Application Support/Nabbed Agent"
 		}
+
 		return filepath.Join(home, "Library", "Application Support", "Nabbed Agent")
 	default:
 		if os.Geteuid() == 0 {
 			return "/var/lib/nabbed-agent"
 		}
+
 		if d := os.Getenv("XDG_STATE_HOME"); d != "" {
 			return filepath.Join(d, "nabbed-agent")
 		}
+
 		return filepath.Join(home, ".local", "state", "nabbed-agent")
 	}
 }

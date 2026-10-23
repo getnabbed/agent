@@ -14,6 +14,7 @@ func lockFile(f *os.File) error {
 	if errors.Is(err, unix.EWOULDBLOCK) {
 		return ErrLocked
 	}
+
 	return err
 }
 

@@ -49,6 +49,7 @@ func openLocked(e *env) (*credstore.Store, *lock.Lock, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+
 	l, err := lock.Acquire(store.Dir())
 	if errors.Is(err, lock.ErrLocked) {
 		return nil, nil, fmt.Errorf("%w (%s); stop the running agent first", err, store.Dir())
@@ -56,6 +57,7 @@ func openLocked(e *env) (*credstore.Store, *lock.Lock, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+
 	return store, l, nil
 }
 
@@ -64,8 +66,10 @@ func httpClient(caFile string) (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.TLSClientConfig = cfg
+
 	return &http.Client{Timeout: 30 * time.Second, Transport: tr}, nil
 }
 
@@ -75,18 +79,22 @@ func pair(ctx context.Context, e *env, store *credstore.Store, f connFlags) (*cr
 	if f.apiURL == "" {
 		return nil, "", fmt.Errorf("--api-url (or %s) is required to pair", envAPIURL)
 	}
+
 	api, err := auth.ParseAPIURL(f.apiURL)
 	if err != nil {
 		return nil, "", err
 	}
+
 	hc, err := httpClient(f.caFile)
 	if err != nil {
 		return nil, "", err
 	}
+
 	id, err := identity.Generate()
 	if err != nil {
 		return nil, "", err
 	}
+
 	client := auth.NewClient(api, hc, userAgent())
 
 	tr, err := auth.Pair(ctx, client, id, auth.PairOptions{
@@ -98,6 +106,7 @@ func pair(ctx context.Context, e *env, store *credstore.Store, f connFlags) (*cr
 			if ar.VerificationURIComplete != "" {
 				uri = ar.VerificationURIComplete
 			}
+
 			// The log line carries the code for headless installs (docker logs).
 			e.log.Info("pairing required: approve this agent in the web app",
 				"verification_uri", uri, "user_code", ar.UserCode, "fingerprint", id.Thumbprint()[:16])
@@ -108,10 +117,12 @@ func pair(ctx context.Context, e *env, store *credstore.Store, f connFlags) (*cr
 	if err != nil {
 		return nil, "", err
 	}
+
 	gw, err := auth.ValidateGatewayURL(api, tr.GatewayURL)
 	if err != nil {
 		return nil, "", fmt.Errorf("refusing gateway from pairing response: %w", err)
 	}
+
 	creds := &credstore.Credentials{
 		AgentID: tr.AgentID, TenantID: tr.TenantID,
 		APIURL: api.String(), GatewayURL: gw.String(),
@@ -119,10 +130,13 @@ func pair(ctx context.Context, e *env, store *credstore.Store, f connFlags) (*cr
 		RefreshToken: tr.RefreshToken,
 		PairedAt:     time.Now().UTC(),
 	}
+
 	if err := store.Save(creds); err != nil {
 		return nil, "", fmt.Errorf("save credentials: %w", err)
 	}
+
 	e.log.Info("agent paired", "agent_id", creds.AgentID, "tenant_id", creds.TenantID, "protector", store.Protector().Name())
+
 	return creds, tr.AccessToken, nil
 }
 
@@ -135,24 +149,29 @@ func runPair(ctx context.Context, e *env, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
+
 	store, l, err := openLocked(e)
 	if err != nil {
 		e.log.Error("cannot open data dir", "err", err)
 		return ExitError
 	}
+
 	defer func() { _ = l.Release() }()
 
 	if existing, err := store.Load(); err == nil && !*force {
 		e.log.Error("agent is already paired; use --force to replace its identity", "agent_id", existing.AgentID)
 		return ExitError
 	}
+
 	if _, _, err := pair(ctx, e, store, f); err != nil {
 		if ctx.Err() != nil {
 			return ExitError
 		}
+
 		e.log.Error("pairing failed", "err", err)
 		return ExitError
 	}
+
 	return ExitOK
 }
 
@@ -164,11 +183,13 @@ func runRun(ctx context.Context, e *env, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
+
 	store, l, err := openLocked(e)
 	if err != nil {
 		e.log.Error("cannot open data dir", "err", err)
 		return ExitError
 	}
+
 	defer func() { _ = l.Release() }()
 
 	creds, err := store.Load()
@@ -181,6 +202,7 @@ func runRun(ctx context.Context, e *env, args []string) int {
 		if ctx.Err() != nil {
 			return ExitOK
 		}
+
 		e.log.Error("cannot load credentials", "err", err)
 		return ExitError
 	}
@@ -190,16 +212,19 @@ func runRun(ctx context.Context, e *env, args []string) int {
 		e.log.Error("credentials are corrupt", "err", err)
 		return ExitError
 	}
+
 	api, err := auth.ParseAPIURL(creds.APIURL)
 	if err != nil {
 		e.log.Error("stored api url is invalid", "err", err)
 		return ExitError
 	}
+
 	hc, err := httpClient(f.caFile)
 	if err != nil {
 		e.log.Error("tls setup failed", "err", err)
 		return ExitError
 	}
+
 	clk := clock.New()
 	tokens := auth.NewTokenSource(auth.NewClient(api, hc, userAgent()), store, id, creds, clk, e.log)
 	if seed != "" {
@@ -213,6 +238,7 @@ func runRun(ctx context.Context, e *env, args []string) int {
 		e.log.Error("tls setup failed", "err", err)
 		return ExitError
 	}
+
 	lc, err := link.New(link.Config{
 		GatewayURL:           creds.GatewayURL,
 		TransportCredentials: credentials.NewTLS(tlsCfg),
@@ -229,6 +255,7 @@ func runRun(ctx context.Context, e *env, args []string) int {
 		e.log.Error("link setup failed", "err", err)
 		return ExitError
 	}
+
 	defer func() { _ = lc.Close() }()
 
 	e.log.Info("agent starting", "agent_id", creds.AgentID, "gateway", creds.GatewayURL, "instance_id", lc.InstanceID())
@@ -251,11 +278,13 @@ func runStatus(_ context.Context, e *env, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
+
 	store, err := credstore.Open(e.dataDir, e.log)
 	if err != nil {
 		e.log.Error("cannot open data dir", "err", err)
 		return ExitError
 	}
+
 	creds, err := store.Load()
 	if errors.Is(err, credstore.ErrNotPaired) {
 		fmt.Fprintf(e.stdout, "not paired\ndata dir:    %s\n", store.Dir())
@@ -265,20 +294,24 @@ func runStatus(_ context.Context, e *env, args []string) int {
 		e.log.Error("cannot load credentials", "err", err)
 		return ExitError
 	}
+
 	id, err := identity.FromSecrets(creds.SignSeed, creds.SealKey)
 	if err != nil {
 		e.log.Error("credentials are corrupt", "err", err)
 		return ExitError
 	}
+
 	refreshed := "never"
 	if !creds.RefreshedAt.IsZero() {
 		refreshed = creds.RefreshedAt.Format(time.RFC3339)
 	}
+
 	fmt.Fprintf(e.stdout, "agent id:    %s\ntenant id:   %s\napi:         %s\ngateway:     %s\nfingerprint: %s\npaired:      %s\nrefreshed:   %s\ndata dir:    %s\n",
 		creds.AgentID, creds.TenantID, creds.APIURL, creds.GatewayURL, id.Thumbprint(),
 		creds.PairedAt.Format(time.RFC3339), refreshed, store.Dir())
 	if creds.PendingRefresh != nil {
 		fmt.Fprintf(e.stdout, "note:        a token refresh was interrupted at %s and will be retried\n", creds.PendingRefresh.StartedAt.Format(time.RFC3339))
 	}
+
 	return ExitOK
 }

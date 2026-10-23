@@ -18,6 +18,7 @@ func testStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return s
 }
 
@@ -56,15 +57,18 @@ func TestPermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("mode bits do not apply on Windows")
 	}
+
 	s := testStore(t)
 	if err := s.Save(&Credentials{AgentID: "a"}); err != nil {
 		t.Fatal(err)
 	}
+
 	for path, want := range map[string]os.FileMode{s.Dir(): 0o700, s.Path(): 0o600} {
 		fi, err := os.Stat(path)
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		if got := fi.Mode().Perm(); got != want {
 			t.Errorf("%s mode = %v, want %v", path, got, want)
 		}
@@ -78,6 +82,7 @@ func TestSaveLeavesNoTempFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+
 	entries, _ := os.ReadDir(s.Dir())
 	if len(entries) != 1 {
 		t.Fatalf("expected only %s, found %d entries", FileName, len(entries))
@@ -89,6 +94,7 @@ func TestUnknownProtectorRejected(t *testing.T) {
 	if err := os.WriteFile(s.Path(), []byte(`{"format":1,"protector":"tpm2","data":""}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	_, err := s.Load()
 	if err == nil || !strings.Contains(err.Error(), "tpm2") {
 		t.Fatalf("Load() err = %v, want unknown protector error", err)

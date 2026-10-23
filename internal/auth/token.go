@@ -51,21 +51,26 @@ func ParseAccessToken(raw string, receivedAt time.Time) (AccessToken, error) {
 	if len(parts) != 3 {
 		return AccessToken{}, errors.New("access token is not a JWT")
 	}
+
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
 		return AccessToken{}, fmt.Errorf("access token payload: %w", err)
 	}
+
 	var claims struct {
 		JTI string `json:"jti"`
 		Exp int64  `json:"exp"`
 		Iat int64  `json:"iat"`
 	}
+
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return AccessToken{}, fmt.Errorf("access token claims: %w", err)
 	}
+
 	if claims.Exp == 0 || claims.JTI == "" {
 		return AccessToken{}, errors.New("access token lacks exp or jti")
 	}
+
 	t := AccessToken{Raw: raw, JTI: claims.JTI}
 	if claims.Iat > 0 && claims.Exp > claims.Iat {
 		t.Lifetime = time.Duration(claims.Exp-claims.Iat) * time.Second
@@ -74,6 +79,7 @@ func ParseAccessToken(raw string, receivedAt time.Time) (AccessToken, error) {
 		t.Expiry = time.Unix(claims.Exp, 0)
 		t.Lifetime = t.Expiry.Sub(receivedAt)
 	}
+
 	return t, nil
 }
 
@@ -106,9 +112,11 @@ func NewTokenSource(c *Client, store *credstore.Store, id *identity.Identity, cr
 	if clk == nil {
 		clk = clock.New()
 	}
+
 	if log == nil {
 		log = slog.Default()
 	}
+
 	return &TokenSource{client: c, store: store, id: id, clock: clk, log: log, creds: creds.Clone()}
 }
 
@@ -118,9 +126,11 @@ func (ts *TokenSource) Seed(raw string) error {
 	if err != nil {
 		return err
 	}
+
 	ts.mu.Lock()
 	ts.current = t
 	ts.mu.Unlock()
+
 	return nil
 }
 
@@ -132,6 +142,7 @@ func (ts *TokenSource) Token(ctx context.Context) (AccessToken, error) {
 	if ts.current.Fresh(ts.clock.Local()) {
 		return ts.current, nil
 	}
+
 	return ts.refreshLocked(ctx)
 }
 
@@ -152,6 +163,7 @@ func (ts *TokenSource) refreshLocked(ctx context.Context) (AccessToken, error) {
 		if err != nil {
 			return AccessToken{}, err
 		}
+
 		pr = &credstore.PendingRefresh{Nonce: nonce, RefreshToken: ts.creds.RefreshToken, StartedAt: ts.clock.Local().UTC()}
 		next := ts.creds.Clone()
 		next.PendingRefresh = pr
@@ -159,6 +171,7 @@ func (ts *TokenSource) refreshLocked(ctx context.Context) (AccessToken, error) {
 		if err := ts.store.Save(next); err != nil {
 			return AccessToken{}, fmt.Errorf("persist refresh intent: %w", err)
 		}
+
 		ts.creds = next
 	} else {
 		ts.log.Info("retrying interrupted token refresh", "started_at", pr.StartedAt)
@@ -177,6 +190,7 @@ func (ts *TokenSource) refreshLocked(ctx context.Context) (AccessToken, error) {
 		if errors.As(err, &apiErr) && apiErr.Permanent() {
 			return AccessToken{}, fmt.Errorf("%w: %w", ErrReauthRequired, apiErr)
 		}
+
 		return AccessToken{}, fmt.Errorf("refresh access token: %w", err)
 	}
 
@@ -184,6 +198,7 @@ func (ts *TokenSource) refreshLocked(ctx context.Context) (AccessToken, error) {
 	if err != nil {
 		return AccessToken{}, err
 	}
+
 	next := ts.creds.Clone()
 	next.RefreshToken = resp.RefreshToken
 	next.PendingRefresh = nil
@@ -194,8 +209,10 @@ func (ts *TokenSource) refreshLocked(ctx context.Context) (AccessToken, error) {
 		// disk still allows an idempotent retry, so keep running.
 		ts.log.Error("could not persist rotated refresh token; will retry on next refresh", "err", err)
 	}
+
 	ts.current = tok
 	ts.log.Debug("access token refreshed", "jti", tok.JTI, "expires_in", tok.Expiry.Sub(ts.clock.Local()).Round(time.Second))
+
 	return tok, nil
 }
 
@@ -204,5 +221,6 @@ func newNonce() (string, error) {
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
+
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }

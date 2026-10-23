@@ -27,6 +27,7 @@ func platformProtectorByName(name string) Protector {
 	if name == (dpapiProtector{}).Name() {
 		return dpapiProtector{}
 	}
+
 	return nil
 }
 
@@ -34,14 +35,17 @@ func secureDir(dir string, _ *slog.Logger) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+
 	sd, err := windows.SecurityDescriptorFromString(ownerOnlySDDL)
 	if err != nil {
 		return err
 	}
+
 	dacl, _, err := sd.DACL()
 	if err != nil {
 		return err
 	}
+
 	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 		nil, nil, dacl, nil)
@@ -74,6 +78,7 @@ func dpapi(in []byte, protect bool) ([]byte, error) {
 	if len(in) == 0 {
 		return nil, errors.New("dpapi: empty input")
 	}
+
 	inBlob := windows.DataBlob{Size: uint32(len(in)), Data: &in[0]}
 	ent := windows.DataBlob{Size: uint32(len(dpapiEntropy)), Data: &dpapiEntropy[0]}
 	var out windows.DataBlob
@@ -86,6 +91,8 @@ func dpapi(in []byte, protect bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer windows.LocalFree(windows.Handle(unsafe.Pointer(out.Data)))
+
 	return append([]byte(nil), unsafe.Slice(out.Data, out.Size)...), nil
 }

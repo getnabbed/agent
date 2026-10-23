@@ -28,9 +28,11 @@ func parseLine(t *testing.T, line string) map[string]any {
 		m[slog.TimeKey] = toks[i]
 		i++
 	}
+
 	if i >= len(toks) {
 		t.Fatalf("line %q has no level", line)
 	}
+
 	m[slog.LevelKey] = strings.TrimSpace(toks[i])
 	i++
 
@@ -39,6 +41,7 @@ func parseLine(t *testing.T, line string) map[string]any {
 		msg = append(msg, toks[i])
 		i++
 	}
+
 	m[slog.MessageKey] = strings.Join(msg, " ")
 
 	for ; i < len(toks); i++ {
@@ -46,6 +49,7 @@ func parseLine(t *testing.T, line string) map[string]any {
 		if uq, err := strconv.Unquote(v); err == nil {
 			v = uq
 		}
+
 		cur := m
 		parts := strings.Split(k, ".")
 		for _, p := range parts[:len(parts)-1] {
@@ -54,10 +58,13 @@ func parseLine(t *testing.T, line string) map[string]any {
 				next = map[string]any{}
 				cur[p] = next
 			}
+
 			cur = next
 		}
+
 		cur[parts[len(parts)-1]] = v
 	}
+
 	return m
 }
 
@@ -86,9 +93,11 @@ func tokenize(t *testing.T, line string) []string {
 			cur.WriteByte(c)
 		}
 	}
+
 	if cur.Len() > 0 {
 		toks = append(toks, cur.String())
 	}
+
 	return toks
 }
 
@@ -101,10 +110,13 @@ func TestTextHandlerConformance(t *testing.T) {
 			if line == "" {
 				continue
 			}
+
 			out = append(out, parseLine(t, line))
 		}
+
 		return out
 	}
+
 	if err := slogtest.TestHandler(h, results); err != nil {
 		t.Fatal(err)
 	}
@@ -143,6 +155,7 @@ func TestTextHandlerColor(t *testing.T) {
 	if !strings.Contains(got, ansiRed+"ERROR"+ansiReset) {
 		t.Errorf("expected coloured level in %q", got)
 	}
+
 	if !strings.Contains(got, ansiFaint+"k="+ansiReset+"v") {
 		t.Errorf("expected faint key in %q", got)
 	}

@@ -26,6 +26,7 @@ func (c *Clock) Local() time.Time {
 	if c.now != nil {
 		return c.now()
 	}
+
 	return time.Now()
 }
 
@@ -43,5 +44,6 @@ func (c *Clock) Offset() time.Duration { return time.Duration(c.offset.Load()) }
 func (c *Clock) Observe(server, localAt time.Time) time.Duration {
 	d := server.Sub(localAt)
 	c.offset.Store(int64(d))
+
 	return d
 }

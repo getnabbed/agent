@@ -29,6 +29,7 @@ func protectorByName(name string) (Protector, error) {
 		if p := platformProtectorByName(name); p != nil {
 			return p, nil
 		}
+
 		return nil, fmt.Errorf("credentials were protected with %q, which is not available on this platform", name)
 	}
 }

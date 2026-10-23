@@ -30,20 +30,25 @@ func New(o Options) (*tls.Config, error) {
 		if err != nil || pool == nil {
 			pool = x509.NewCertPool()
 		}
+
 		pem, err := os.ReadFile(o.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("read ca_file: %w", err)
 		}
+
 		if !pool.AppendCertsFromPEM(pem) {
 			return nil, fmt.Errorf("ca_file %s contains no PEM certificates", o.CAFile)
 		}
+
 		cfg.RootCAs = pool
 	}
+
 	if len(o.SPKIPins) > 0 {
 		pins := make(map[string]bool, len(o.SPKIPins))
 		for _, p := range o.SPKIPins {
 			pins[p] = true
 		}
+
 		cfg.VerifyConnection = func(cs tls.ConnectionState) error {
 			for _, chain := range cs.VerifiedChains {
 				for _, cert := range chain {
@@ -52,14 +57,17 @@ func New(o Options) (*tls.Config, error) {
 					}
 				}
 			}
+
 			return errors.New("tls: no certificate in the chain matches a configured SPKI pin")
 		}
 	}
+
 	return cfg, nil
 }
 
 // SPKIHash returns base64(sha256(cert.RawSubjectPublicKeyInfo)).
 func SPKIHash(cert *x509.Certificate) string {
 	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+
 	return base64.StdEncoding.EncodeToString(sum[:])
 }

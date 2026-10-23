@@ -42,6 +42,7 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 	mux.HandleFunc("POST /api/device/refresh", f.refresh)
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
+
 	return f
 }
 
@@ -51,6 +52,7 @@ func (f *fakeAPI) jwt() string {
 	f.seq++
 	now := time.Now().Unix()
 	claims, _ := json.Marshal(map[string]any{"jti": fmt.Sprintf("jti-%d", f.seq), "iat": now, "exp": now + 1800})
+
 	return "e30." + base64.RawURLEncoding.EncodeToString(claims) + ".sig"
 }
 
@@ -68,6 +70,7 @@ func (f *fakeAPI) authorize(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "invalid_request"})
 		return
 	}
+
 	f.mu.Lock()
 	f.pub = pub
 	f.mu.Unlock()
@@ -82,6 +85,7 @@ func (f *fakeAPI) token(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "authorization_pending"})
 		return
 	}
+
 	f.current = fmt.Sprintf("rt-%d", f.seq)
 	writeJSON(w, 200, TokenResponse{AgentID: "agent-1", TenantID: "tenant-1", AccessToken: f.jwt(), RefreshToken: f.current, GatewayURL: "https://gw.example"})
 }
@@ -99,10 +103,12 @@ func (f *fakeAPI) refresh(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 401, map[string]string{"error": "invalid_grant", "error_description": "bad proof"})
 		return
 	}
+
 	if f.revoked {
 		writeJSON(w, 401, map[string]string{"error": "agent_revoked"})
 		return
 	}
+
 	// Idempotent retry of an already-rotated token with the same nonce.
 	if byNonce, ok := f.replay[req.RefreshToken]; ok {
 		if body, ok := byNonce[req.Nonce]; ok {
@@ -111,15 +117,18 @@ func (f *fakeAPI) refresh(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
 	if _, ok := f.spent[req.RefreshToken]; ok {
 		f.revoked = true // reuse detected
 		writeJSON(w, 401, map[string]string{"error": "invalid_grant", "error_description": "refresh token reuse"})
 		return
 	}
+
 	if req.RefreshToken != f.current {
 		writeJSON(w, 401, map[string]string{"error": "invalid_grant"})
 		return
 	}
+
 	f.spent[req.RefreshToken] = req.Nonce
 	f.current = fmt.Sprintf("rt-%d", f.seq+1)
 	body, _ := json.Marshal(RefreshResponse{AccessToken: f.jwt(), RefreshToken: f.current})
@@ -131,6 +140,7 @@ func (f *fakeAPI) refresh(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close()
 		return
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(body)
 }

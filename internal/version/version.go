@@ -25,9 +25,11 @@ func init() {
 	if !ok {
 		return
 	}
+
 	if Version == "dev" && info.Main.Version != "" && info.Main.Version != "(devel)" {
 		Version = info.Main.Version
 	}
+
 	for _, s := range info.Settings {
 		switch s.Key {
 		case "vcs.revision":
@@ -50,10 +52,13 @@ func String() string {
 		if len(c) > 12 {
 			c = c[:12]
 		}
+
 		s += " (" + c + ")"
 	}
+
 	if Date != "" {
 		s += " built " + Date
 	}
+
 	return fmt.Sprintf("%s %s/%s %s", s, runtime.GOOS, runtime.GOARCH, runtime.Version())
 }

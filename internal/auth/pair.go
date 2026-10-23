@@ -33,6 +33,7 @@ func Pair(ctx context.Context, c *Client, id *identity.Identity, o PairOptions) 
 	if o.Sleep == nil {
 		o.Sleep = sleepCtx
 	}
+
 	ar, err := c.Authorize(ctx, AuthorizeRequest{
 		ClientName: o.ClientName,
 		PublicKeys: PublicKeys{
@@ -45,6 +46,7 @@ func Pair(ctx context.Context, c *Client, id *identity.Identity, o PairOptions) 
 	if err != nil {
 		return nil, fmt.Errorf("start pairing: %w", err)
 	}
+
 	if o.Prompt != nil {
 		o.Prompt(ar)
 	}
@@ -53,19 +55,23 @@ func Pair(ctx context.Context, c *Client, id *identity.Identity, o PairOptions) 
 	if interval < time.Second {
 		interval = 5 * time.Second // RFC 8628 §3.2 default
 	}
+
 	for {
 		if err := o.Sleep(ctx, interval); err != nil {
 			return nil, err
 		}
+
 		tr, err := c.Token(ctx, ar.DeviceCode)
 		if err == nil {
 			return tr, nil
 		}
+
 		var apiErr *APIError
 		if !errors.As(err, &apiErr) {
 			// Network trouble: keep polling until the code expires.
 			continue
 		}
+
 		switch apiErr.Code {
 		case "authorization_pending":
 		case "slow_down":

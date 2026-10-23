@@ -42,6 +42,7 @@ func ParseFormat(s string) (Format, error) {
 			return f, nil
 		}
 	}
+
 	return "", fmt.Errorf("unknown log format %q (want one of: %s)", s, joinFormats())
 }
 
@@ -50,6 +51,7 @@ func joinFormats() string {
 	for i, f := range Formats {
 		names[i] = string(f)
 	}
+
 	return strings.Join(names, ", ")
 }
 
@@ -60,6 +62,7 @@ func ParseLevel(s string) (slog.Level, error) {
 	if err := l.UnmarshalText([]byte(strings.TrimSpace(s))); err != nil {
 		return 0, fmt.Errorf("unknown log level %q (want one of: debug, info, warn, error)", s)
 	}
+
 	return l, nil
 }
 
@@ -90,6 +93,7 @@ func NewHandler(opts Options) slog.Handler {
 	if w == nil {
 		w = os.Stderr
 	}
+
 	level := opts.Level
 	if level == nil {
 		level = slog.LevelInfo
@@ -112,6 +116,7 @@ func NewHandler(opts Options) slog.Handler {
 		} else {
 			color = isTerminal(w) && os.Getenv("NO_COLOR") == ""
 		}
+
 		return NewTextHandler(w, &TextOptions{
 			Level:     level,
 			AddSource: opts.AddSource,
@@ -131,9 +136,11 @@ func isTerminal(w io.Writer) bool {
 	if !ok {
 		return false
 	}
+
 	fi, err := f.Stat()
 	if err != nil {
 		return false
 	}
+
 	return fi.Mode()&os.ModeCharDevice != 0
 }

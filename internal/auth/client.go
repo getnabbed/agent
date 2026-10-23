@@ -28,6 +28,7 @@ func NewClient(api *url.URL, hc *http.Client, userAgent string) *Client {
 	if hc == nil {
 		hc = &http.Client{Timeout: 30 * time.Second}
 	}
+
 	return &Client{base: api, http: hc, userAgent: userAgent}
 }
 
@@ -47,6 +48,7 @@ func (e *APIError) Error() string {
 	if e.Description != "" {
 		return fmt.Sprintf("cloud-api %d %s: %s", e.Status, e.Code, e.Description)
 	}
+
 	return fmt.Sprintf("cloud-api %d %s", e.Status, e.Code)
 }
 
@@ -56,6 +58,7 @@ func (e *APIError) Permanent() bool {
 	case "invalid_grant", "access_denied", "expired_token", "invalid_client", "unauthorized_client", "agent_revoked":
 		return true
 	}
+
 	return e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden
 }
 
@@ -113,9 +116,11 @@ func (c *Client) Authorize(ctx context.Context, req AuthorizeRequest) (*Authoriz
 	if err := c.post(ctx, "/api/device/authorize", req, &out); err != nil {
 		return nil, err
 	}
+
 	if out.DeviceCode == "" || out.UserCode == "" || out.VerificationURI == "" {
 		return nil, errors.New("cloud-api: incomplete device authorization response")
 	}
+
 	return &out, nil
 }
 
@@ -125,9 +130,11 @@ func (c *Client) Token(ctx context.Context, deviceCode string) (*TokenResponse, 
 	if err := c.post(ctx, "/api/device/token", map[string]string{"device_code": deviceCode}, &out); err != nil {
 		return nil, err
 	}
+
 	if out.AgentID == "" || out.AccessToken == "" || out.RefreshToken == "" || out.GatewayURL == "" {
 		return nil, errors.New("cloud-api: incomplete token response")
 	}
+
 	return &out, nil
 }
 
@@ -137,9 +144,11 @@ func (c *Client) Refresh(ctx context.Context, req RefreshRequest) (*RefreshRespo
 	if err := c.post(ctx, "/api/device/refresh", req, &out); err != nil {
 		return nil, err
 	}
+
 	if out.AccessToken == "" || out.RefreshToken == "" {
 		return nil, errors.New("cloud-api: incomplete refresh response")
 	}
+
 	return &out, nil
 }
 
@@ -148,35 +157,43 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	if err != nil {
 		return err
 	}
+
 	u := c.base.JoinPath(path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
 	}
+
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return err
 	}
+
 	if resp.StatusCode/100 != 2 {
 		apiErr := &APIError{Status: resp.StatusCode}
 		_ = json.Unmarshal(raw, apiErr)
 		if apiErr.Code == "" {
 			apiErr.Code = http.StatusText(resp.StatusCode)
 		}
+
 		return apiErr
 	}
+
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("cloud-api %s: decode response: %w", path, err)
 	}
+
 	return nil
 }

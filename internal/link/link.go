@@ -109,12 +109,15 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Tokens == nil || cfg.Signer == nil || cfg.Handler == nil || cfg.State == nil {
 		return nil, errors.New("link: Tokens, Signer, State and Handler are required")
 	}
+
 	if cfg.Clock == nil {
 		cfg.Clock = clock.New()
 	}
+
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+
 	cfg.MinBackoff = cmp(cfg.MinBackoff, time.Second)
 	cfg.MaxBackoff = cmp(cfg.MaxBackoff, 60*time.Second)
 	cfg.HelloTimeout = cmp(cfg.HelloTimeout, 15*time.Second)
@@ -127,6 +130,7 @@ func New(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	opts := append([]grpc.DialOption{
 		grpc.WithTransportCredentials(creds),
 		grpc.WithUserAgent("nabbed-agent/" + cfg.Version),
@@ -135,6 +139,7 @@ func New(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("link: %w", err)
 	}
+
 	return &Client{
 		cfg:        cfg,
 		conn:       conn,
@@ -155,12 +160,14 @@ func dialTarget(raw string, tc credentials.TransportCredentials) (string, creden
 	if err != nil || u.Host == "" {
 		return "", nil, fmt.Errorf("link: invalid gateway url %q", raw)
 	}
+
 	port := u.Port()
 	switch u.Scheme {
 	case "https":
 		if port == "" {
 			port = "443"
 		}
+
 		if tc == nil {
 			tc = credentials.NewTLS(nil)
 		}
@@ -168,13 +175,16 @@ func dialTarget(raw string, tc credentials.TransportCredentials) (string, creden
 		if !auth.IsLoopback(u.Hostname()) {
 			return "", nil, errors.New("link: plaintext gateway only allowed on loopback")
 		}
+
 		if port == "" {
 			port = "80"
 		}
+
 		tc = insecure.NewCredentials()
 	default:
 		return "", nil, fmt.Errorf("link: unsupported gateway scheme %q", u.Scheme)
 	}
+
 	return "dns:///" + net.JoinHostPort(u.Hostname(), port), tc, nil
 }
 
@@ -188,6 +198,7 @@ func (c *Client) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
+
 		if established && time.Since(started) >= c.cfg.StableAfter {
 			attempt = 0
 		}
@@ -201,6 +212,7 @@ func (c *Client) Run(ctx context.Context) error {
 			if ga.reason == pb.GoAwayReason_GO_AWAY_REASON_REVOKED {
 				return ErrRevoked
 			}
+
 			// The server chose when we come back; add up to 20% jitter so a
 			// drained pod's agents do not reconnect in lockstep.
 			if ga.after > 0 {
@@ -208,6 +220,7 @@ func (c *Client) Run(ctx context.Context) error {
 			} else if ga.reason == pb.GoAwayReason_GO_AWAY_REASON_TOKEN_EXPIRING || ga.reason == pb.GoAwayReason_GO_AWAY_REASON_DRAIN {
 				delay = rand.N(c.cfg.MinBackoff + 1)
 			}
+
 			attempt = 0
 		case errors.Is(err, errStreamAged):
 			delay = 0
@@ -220,6 +233,7 @@ func (c *Client) Run(ctx context.Context) error {
 		if ga != nil || errors.Is(err, errStreamAged) {
 			lvl = slog.LevelInfo
 		}
+
 		c.log.Log(ctx, lvl, "session ended; reconnecting", "err", err, "in", delay.Round(time.Millisecond))
 		if err := sleep(ctx, delay); err != nil {
 			return nil
@@ -234,6 +248,7 @@ func (c *Client) backoff(attempt int) time.Duration {
 	if ceil > c.cfg.MaxBackoff || ceil <= 0 {
 		ceil = c.cfg.MaxBackoff
 	}
+
 	return c.cfg.MinBackoff + rand.N(ceil-c.cfg.MinBackoff+1)
 }
 
@@ -280,6 +295,7 @@ func (c *Client) session(parent context.Context) (established bool, err error) {
 				recvErr <- err
 				return
 			}
+
 			select {
 			case in <- m:
 			case <-ctx.Done():
@@ -314,6 +330,7 @@ func (c *Client) session(parent context.Context) (established bool, err error) {
 	c.current.Store(s)
 	defer c.current.CompareAndSwap(s, nil)
 	c.log.Info("connected", "session_id", welcome.GetSessionId(), "heartbeat", s.heartbeat, "max_age", s.maxAge)
+
 	return true, s.run(ctx, in, recvErr, tok)
 }
 
@@ -349,6 +366,7 @@ func (c *Client) classify(err error, tok auth.AccessToken) error {
 	case codes.PermissionDenied:
 		return fmt.Errorf("%w: %w", ErrRevoked, err)
 	}
+
 	return err
 }
 
@@ -356,9 +374,11 @@ func (c *Client) goAway(g *pb.GoAway, tok auth.AccessToken) error {
 	if g.GetReason() == pb.GoAwayReason_GO_AWAY_REASON_TOKEN_EXPIRING {
 		c.cfg.Tokens.Invalidate(tok.Raw)
 	}
+
 	if g.GetReason() == pb.GoAwayReason_GO_AWAY_REASON_SUPERSEDED {
 		c.log.Warn("another process connected with this agent's identity; is the data directory shared or copied?")
 	}
+
 	return &goAwayError{reason: g.GetReason(), after: time.Duration(g.GetReconnectAfterMs()) * time.Millisecond, msg: g.GetMessage()}
 }
 
@@ -366,6 +386,7 @@ func cmp(v, def time.Duration) time.Duration {
 	if v <= 0 {
 		return def
 	}
+
 	return v
 }
 
@@ -373,6 +394,7 @@ func sleep(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
 		return ctx.Err()
 	}
+
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
@@ -386,6 +408,7 @@ func sleep(ctx context.Context, d time.Duration) error {
 func newID() string {
 	var b [16]byte
 	_, _ = crand.Read(b[:])
+
 	return hex.EncodeToString(b[:])
 }
 
@@ -400,6 +423,7 @@ func (c *Client) SendEvent(ctx context.Context, id string, ev *pb.Event) error {
 	if s == nil {
 		return ErrNotConnected
 	}
+
 	m := &pb.AgentMessage{Header: c.header(""), Kind: &pb.AgentMessage_Event{Event: ev}}
 	m.Header.Id = id
 	select {

@@ -24,6 +24,7 @@ func pairForTest(t *testing.T, f *fakeAPI) (*TokenSource, *credstore.Store, *ide
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	c := NewClient(f.url(), f.srv.Client(), "test")
 	f.pendingPolls = 2
 	var prompted *AuthorizeResponse
@@ -31,22 +32,27 @@ func pairForTest(t *testing.T, f *fakeAPI) (*TokenSource, *credstore.Store, *ide
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if prompted == nil || prompted.UserCode != "ABCD-EFGH" {
 		t.Fatalf("prompt not called with user code: %+v", prompted)
 	}
+
 	store, err := credstore.OpenWith(filepath.Join(t.TempDir(), "data"), credstore.PlaintextProtector{}, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	creds := &credstore.Credentials{AgentID: tr.AgentID, TenantID: tr.TenantID, APIURL: f.srv.URL, GatewayURL: tr.GatewayURL,
 		SignSeed: id.SignSeed(), SealKey: id.SealKey(), RefreshToken: tr.RefreshToken, PairedAt: time.Now()}
 	if err := store.Save(creds); err != nil {
 		t.Fatal(err)
 	}
+
 	ts := NewTokenSource(c, store, id, creds, nil, quiet)
 	if err := ts.Seed(tr.AccessToken); err != nil {
 		t.Fatal(err)
 	}
+
 	return ts, store, id
 }
 
@@ -57,6 +63,7 @@ func TestPairAndUseSeededToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if tok.JTI == "" || f.refreshes != 0 {
 		t.Fatalf("expected seeded token without refresh, got jti=%q refreshes=%d", tok.JTI, f.refreshes)
 	}
@@ -72,9 +79,11 @@ func TestRefreshRotatesAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if second.JTI == first.JTI {
 		t.Fatal("expected a new access token")
 	}
+
 	creds, _ := store.Load()
 	if creds.RefreshToken != f.current || creds.PendingRefresh != nil {
 		t.Fatalf("store not updated: refresh=%q pending=%v (server current %q)", creds.RefreshToken, creds.PendingRefresh, f.current)
@@ -99,16 +108,20 @@ func TestRefreshSurvivesCrashAfterRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if creds.PendingRefresh == nil {
 		t.Fatal("refresh intent was not persisted before spending the token")
 	}
+
 	restarted := NewTokenSource(NewClient(f.url(), f.srv.Client(), "test"), store, id, creds, nil, quiet)
 	if _, err := restarted.Token(context.Background()); err != nil {
 		t.Fatalf("retry after crash failed: %v", err)
 	}
+
 	if f.revoked {
 		t.Fatal("agent was revoked: retry was treated as refresh-token reuse")
 	}
+
 	creds, _ = store.Load()
 	if creds.RefreshToken != f.current || creds.PendingRefresh != nil {
 		t.Fatalf("store not converged: refresh=%q server=%q pending=%v", creds.RefreshToken, f.current, creds.PendingRefresh)
@@ -132,6 +145,7 @@ func TestReuseWithDifferentNonceRevokes(t *testing.T) {
 	if !errors.Is(err, ErrReauthRequired) {
 		t.Fatalf("clone refresh err = %v, want ErrReauthRequired", err)
 	}
+
 	if !f.revoked {
 		t.Fatal("server should have revoked the agent on reuse")
 	}
@@ -145,9 +159,11 @@ func TestParseAccessTokenUsesLifetimeNotHostClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if tok.Lifetime != 30*time.Minute || !tok.Expiry.Equal(now.Add(30*time.Minute)) {
 		t.Fatalf("lifetime=%v expiry=%v", tok.Lifetime, tok.Expiry)
 	}
+
 	if !tok.Fresh(now.Add(20*time.Minute)) || tok.Fresh(now.Add(26*time.Minute)) {
 		t.Fatal("freshness margin wrong: want refresh within the last 5 minutes")
 	}
@@ -162,11 +178,13 @@ func TestValidateGatewayURL(t *testing.T) {
 			t.Errorf("%s: unexpected error %v", s, err)
 		}
 	}
+
 	for _, s := range bad {
 		if _, err := ValidateGatewayURL(api, s); err == nil {
 			t.Errorf("%s: expected rejection", s)
 		}
 	}
+
 	local, _ := url.Parse("http://localhost:4000")
 	if _, err := ValidateGatewayURL(local, "http://localhost:50051"); err != nil {
 		t.Errorf("loopback dev setup rejected: %v", err)
@@ -179,6 +197,7 @@ func TestParseAPIURL(t *testing.T) {
 			t.Errorf("%s: %v", s, err)
 		}
 	}
+
 	for _, s := range []string{"http://api.example", "ftp://x", "https://api.example?x=1"} {
 		if _, err := ParseAPIURL(s); err == nil {
 			t.Errorf("%s: expected error", s)

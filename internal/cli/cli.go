@@ -67,6 +67,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if errors.Is(err, flag.ErrHelp) {
 			return ExitOK
 		}
+
 		return ExitUsage
 	}
 
@@ -79,11 +80,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "agent: %v\n", err)
 		return ExitUsage
 	}
+
 	format, err := logging.ParseFormat(*logFormat)
 	if err != nil {
 		fmt.Fprintf(stderr, "agent: %v\n", err)
 		return ExitUsage
 	}
+
 	logger := logging.New(logging.Options{
 		Format:    format,
 		Level:     level,
@@ -114,11 +117,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	e.log.Debug("running command", "command", name, "args", rest[1:])
+
 	return cmd.run(ctx, e, rest[1:])
 }
 
 func runVersion(_ context.Context, e *env, _ []string) int {
 	fmt.Fprintln(e.stdout, "agent", version.String())
+
 	return ExitOK
 }
 
@@ -131,10 +136,12 @@ func printUsage(w io.Writer) {
 	for name := range commands {
 		names = append(names, name)
 	}
+
 	sort.Strings(names)
 	for _, name := range names {
 		fmt.Fprintf(w, "  %-10s %s\n", name, commands[name].summary)
 	}
+
 	fmt.Fprintf(w, "  %-10s %s\n", "help", "Show this help")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Flags:")

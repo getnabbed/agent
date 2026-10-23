@@ -33,10 +33,12 @@ func (g *e2eGateway) Connect(srv pb.AgentGatewayService_ConnectServer) error {
 	if a := md.Get("authorization"); len(a) != 1 || a[0] != "Bearer "+e2eJWT {
 		return nil
 	}
+
 	m, err := srv.Recv()
 	if err != nil {
 		return err
 	}
+
 	h := m.GetHello()
 	g.mu.Lock()
 	pub := g.pub
@@ -44,8 +46,10 @@ func (g *e2eGateway) Connect(srv pb.AgentGatewayService_ConnectServer) error {
 	if h == nil || !identity.Verify(pub, identity.HelloSigningInput("jti-1", h.GetInstanceId(), h.GetSignedAtMs()), h.GetSignature()) {
 		return nil
 	}
+
 	g.hello <- h
 	_ = srv.Send(&pb.ControlMessage{Kind: &pb.ControlMessage_Welcome{Welcome: &pb.Welcome{SessionId: "s1", HeartbeatMs: 1000}}})
+
 	return srv.Send(&pb.ControlMessage{Kind: &pb.ControlMessage_GoAway{GoAway: &pb.GoAway{Reason: pb.GoAwayReason_GO_AWAY_REASON_REVOKED}}})
 }
 
@@ -61,6 +65,7 @@ func TestRunPairsConnectsAndStopsOnRevoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	gs := grpc.NewServer()
 	pb.RegisterAgentGatewayServiceServer(gs, gw)
 	go func() { _ = gs.Serve(lis) }()
@@ -71,6 +76,7 @@ func TestRunPairsConnectsAndStopsOnRevoke(t *testing.T) {
 		var req struct {
 			PublicKeys struct{ Ed25519 string } `json:"public_keys"`
 		}
+
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		pub, _ := base64.RawURLEncoding.DecodeString(req.PublicKeys.Ed25519)
 		gw.mu.Lock()
@@ -93,9 +99,11 @@ func TestRunPairsConnectsAndStopsOnRevoke(t *testing.T) {
 	if code != ExitReauth || !strings.Contains(errb.String(), "pair it again") {
 		t.Fatalf("exit=%d\nstderr=%s", code, errb.String())
 	}
+
 	if !strings.Contains(out.String(), "WXYZ-1234") || !strings.Contains(errb.String(), `"user_code":"WXYZ-1234"`) {
 		t.Fatalf("pairing code not shown on stdout and in logs\nstdout=%s\nstderr=%s", out.String(), errb.String())
 	}
+
 	select {
 	case h := <-gw.hello:
 		if !h.GetFresh() || h.GetVersion() == "" {
@@ -109,6 +117,7 @@ func TestRunPairsConnectsAndStopsOnRevoke(t *testing.T) {
 	if code := Run(context.Background(), []string{"--data-dir", dir, "status"}, &out, &errb); code != ExitOK {
 		t.Fatalf("status exit=%d", code)
 	}
+
 	if !strings.Contains(out.String(), "agent-9") || strings.Contains(out.String(), "rt") && strings.Contains(out.String(), "refresh_token") {
 		t.Fatalf("status output wrong or leaks secrets:\n%s", out.String())
 	}

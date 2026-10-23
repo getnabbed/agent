@@ -72,6 +72,7 @@ func (c *Credentials) LogValue() slog.Value {
 	if c == nil {
 		return slog.StringValue("<nil>")
 	}
+
 	return slog.GroupValue(
 		slog.String("agent_id", c.AgentID),
 		slog.String("tenant_id", c.TenantID),
@@ -90,6 +91,7 @@ func (c *Credentials) Clone() *Credentials {
 		pr := *c.PendingRefresh
 		out.PendingRefresh = &pr
 	}
+
 	return &out
 }
 
@@ -118,9 +120,11 @@ func OpenWith(dir string, prot Protector, log *slog.Logger) (*Store, error) {
 	if log == nil {
 		log = slog.Default()
 	}
+
 	if err := secureDir(dir, log); err != nil {
 		return nil, fmt.Errorf("prepare data dir %s: %w", dir, err)
 	}
+
 	return &Store{dir: dir, prot: prot, log: log}, nil
 }
 
@@ -142,27 +146,33 @@ func (s *Store) Load() (*Credentials, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	checkFileMode(s.Path(), s.log)
 
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", s.Path(), err)
 	}
+
 	if env.Format != formatVersion {
 		return nil, fmt.Errorf("%s: unsupported format %d", s.Path(), env.Format)
 	}
+
 	prot, err := protectorByName(env.Protector)
 	if err != nil {
 		return nil, err
 	}
+
 	plain, err := prot.Unprotect(env.Data)
 	if err != nil {
 		return nil, fmt.Errorf("unprotect credentials (%s): %w", env.Protector, err)
 	}
+
 	var c Credentials
 	if err := json.Unmarshal(plain, &c); err != nil {
 		return nil, fmt.Errorf("decode credentials: %w", err)
 	}
+
 	return &c, nil
 }
 
@@ -172,14 +182,17 @@ func (s *Store) Save(c *Credentials) error {
 	if err != nil {
 		return err
 	}
+
 	data, err := s.prot.Protect(plain)
 	if err != nil {
 		return fmt.Errorf("protect credentials (%s): %w", s.prot.Name(), err)
 	}
+
 	out, err := json.MarshalIndent(envelope{Format: formatVersion, Protector: s.prot.Name(), Data: data}, "", "  ")
 	if err != nil {
 		return err
 	}
+
 	return writeFileAtomic(s.Path(), append(out, '\n'))
 }
 
@@ -189,6 +202,7 @@ func (s *Store) Delete() error {
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
+
 	return err
 }
 
@@ -201,6 +215,7 @@ func writeFileAtomic(path string, data []byte) (err error) {
 	if err != nil {
 		return err
 	}
+
 	tmp := f.Name()
 	defer func() {
 		if err != nil {
@@ -211,19 +226,24 @@ func writeFileAtomic(path string, data []byte) (err error) {
 		_ = f.Close()
 		return err
 	}
+
 	if _, err = f.Write(data); err != nil {
 		_ = f.Close()
 		return err
 	}
+
 	if err = f.Sync(); err != nil {
 		_ = f.Close()
 		return err
 	}
+
 	if err = f.Close(); err != nil {
 		return err
 	}
+
 	if err = os.Rename(tmp, path); err != nil {
 		return err
 	}
+
 	return syncDir(dir)
 }

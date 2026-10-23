@@ -16,6 +16,7 @@ func lockFile(f *os.File) error {
 	if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
 		return ErrLocked
 	}
+
 	return err
 }
 

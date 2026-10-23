@@ -33,10 +33,12 @@ func Generate() (*Identity, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generate ed25519 key: %w", err)
 	}
+
 	seal, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("generate x25519 key: %w", err)
 	}
+
 	return &Identity{sign: sign, seal: seal}, nil
 }
 
@@ -46,10 +48,12 @@ func FromSecrets(signSeed, sealKey []byte) (*Identity, error) {
 	if len(signSeed) != ed25519.SeedSize {
 		return nil, errors.New("identity: bad ed25519 seed length")
 	}
+
 	seal, err := ecdh.X25519().NewPrivateKey(sealKey)
 	if err != nil {
 		return nil, fmt.Errorf("identity: bad x25519 key: %w", err)
 	}
+
 	return &Identity{sign: ed25519.NewKeyFromSeed(signSeed), seal: seal}, nil
 }
 
@@ -83,6 +87,7 @@ func Thumbprint(pub ed25519.PublicKey) string {
 	x := base64.RawURLEncoding.EncodeToString(pub)
 	canonical := `{"crv":"Ed25519","kty":"OKP","x":"` + x + `"}`
 	sum := sha256.Sum256([]byte(canonical))
+
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
@@ -119,6 +124,7 @@ func encode(label string, fields ...[]byte) []byte {
 	for _, f := range fields {
 		n += 4 + len(f)
 	}
+
 	out := make([]byte, 0, n)
 	out = binary.BigEndian.AppendUint32(out, uint32(len(label)))
 	out = append(out, label...)
@@ -126,6 +132,7 @@ func encode(label string, fields ...[]byte) []byte {
 		out = binary.BigEndian.AppendUint32(out, uint32(len(f)))
 		out = append(out, f...)
 	}
+
 	return out
 }
 

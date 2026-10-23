@@ -53,12 +53,15 @@ func NewTextHandler(w io.Writer, opts *TextOptions) *TextHandler {
 	if opts != nil {
 		h.opts = *opts
 	}
+
 	if h.opts.Level == nil {
 		h.opts.Level = slog.LevelInfo
 	}
+
 	if h.opts.TimeFormat == "" {
 		h.opts.TimeFormat = "15:04:05.000"
 	}
+
 	return h
 }
 
@@ -72,13 +75,16 @@ func (h *TextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	if len(attrs) == 0 {
 		return h
 	}
+
 	h2 := h.clone()
 	var sb strings.Builder
 	sb.WriteString(h.prefix)
 	for _, a := range attrs {
 		h2.appendAttr(&sb, h.groupPrefix(), a)
 	}
+
 	h2.prefix = sb.String()
+
 	return h2
 }
 
@@ -87,8 +93,10 @@ func (h *TextHandler) WithGroup(name string) slog.Handler {
 	if name == "" {
 		return h
 	}
+
 	h2 := h.clone()
 	h2.groups = append(h2.groups[:len(h2.groups):len(h2.groups)], name)
+
 	return h2
 }
 
@@ -106,6 +114,7 @@ func (h *TextHandler) groupPrefix() string {
 	if len(h.groups) == 0 {
 		return ""
 	}
+
 	return strings.Join(h.groups, ".") + "."
 }
 
@@ -144,6 +153,7 @@ func (h *TextHandler) Handle(_ context.Context, r slog.Record) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	_, err := io.WriteString(h.w, sb.String())
+
 	return err
 }
 
@@ -153,19 +163,24 @@ func (h *TextHandler) appendAttr(sb *strings.Builder, prefix string, a slog.Attr
 	if a.Equal(slog.Attr{}) {
 		return
 	}
+
 	if a.Value.Kind() == slog.KindGroup {
 		attrs := a.Value.Group()
 		if len(attrs) == 0 {
 			return
 		}
+
 		if a.Key != "" {
 			prefix += a.Key + "."
 		}
+
 		for _, ga := range attrs {
 			h.appendAttr(sb, prefix, ga)
 		}
+
 		return
 	}
+
 	h.writeKV(sb, prefix+a.Key, formatValue(a.Value))
 }
 
@@ -180,6 +195,7 @@ func (h *TextHandler) color(sb *strings.Builder, code, s string) {
 		sb.WriteString(s)
 		return
 	}
+
 	sb.WriteString(code)
 	sb.WriteString(s)
 	sb.WriteString(ansiReset)
@@ -213,6 +229,7 @@ func formatValue(v slog.Value) string {
 		case fmt.Stringer:
 			return quote(x.String())
 		}
+
 		return quote(fmt.Sprintf("%+v", v.Any()))
 	default:
 		return quote(v.String())
@@ -225,11 +242,13 @@ func quote(s string) string {
 	if s == "" {
 		return `""`
 	}
+
 	for _, r := range s {
 		if r == '"' || r == '=' || r == utf8.RuneError || unicode.IsSpace(r) || !unicode.IsPrint(r) {
 			return strconv.Quote(s)
 		}
 	}
+
 	return s
 }
 
@@ -283,5 +302,6 @@ func shortFile(path string) string {
 			}
 		}
 	}
+
 	return path
 }

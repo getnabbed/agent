@@ -40,6 +40,7 @@ func newSession(c *Client, stream pb.AgentGatewayService_ConnectClient, w *pb.We
 	if hb <= 0 {
 		hb = defaultHeartbeat
 	}
+
 	return &session{
 		c:         c,
 		stream:    stream,
@@ -91,6 +92,7 @@ func (s *session) run(ctx context.Context, in <-chan *pb.ControlMessage, recvErr
 			if seq-acked >= missedAckLimit {
 				return errHeartbeatTimeout
 			}
+
 			seq++
 			s.sendControl(ctx, &pb.AgentMessage{Header: s.c.header(""), Kind: &pb.AgentMessage_Heartbeat{Heartbeat: &pb.Heartbeat{Seq: seq}}})
 		case m := <-in:
@@ -99,6 +101,7 @@ func (s *session) run(ctx context.Context, in <-chan *pb.ControlMessage, recvErr
 				if k.HeartbeatAck.GetSeq() > acked {
 					acked = k.HeartbeatAck.GetSeq()
 				}
+
 				if st := k.HeartbeatAck.GetServerTimeMs(); st > 0 {
 					now := s.c.cfg.Clock.Local()
 					if off := s.c.cfg.Clock.Observe(time.UnixMilli(st), now); off > 2*time.Minute || off < -2*time.Minute {
@@ -139,11 +142,14 @@ func (s *session) commandWorker(ctx context.Context) {
 			if d := cmd.GetDeadlineMs(); d > 0 {
 				cctx, cancel = context.WithDeadline(ctx, time.UnixMilli(d))
 			}
+
 			res := s.c.cfg.Handler.HandleCommand(cctx, cmd)
 			cancel()
+
 			if res == nil {
 				res = &pb.CommandResult{Outcome: pb.CommandOutcome_COMMAND_OUTCOME_FAILED, ErrorCode: pb.CommandErrorCode_COMMAND_ERROR_CODE_INTERNAL}
 			}
+
 			res.CommandId = cmd.GetId()
 			s.sendControl(ctx, &pb.AgentMessage{Header: s.c.header(cmd.GetId()), Kind: &pb.AgentMessage_CommandResult{CommandResult: res}})
 		}
@@ -157,6 +163,7 @@ func (s *session) startQuery(ctx context.Context, msgID string, q *pb.Query, wg 
 		s.sendControl(ctx, queryResult(s.c, msgID, &pb.QueryResult{QueryId: q.GetId(), Error: "agent busy"}))
 		return
 	}
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -167,6 +174,7 @@ func (s *session) startQuery(ctx context.Context, msgID string, q *pb.Query, wg 
 		if res == nil {
 			res = &pb.QueryResult{Error: "no result"}
 		}
+
 		res.QueryId = q.GetId()
 		s.sendControl(ctx, queryResult(s.c, msgID, res))
 	}()
@@ -193,9 +201,11 @@ func (s *session) writer(ctx context.Context) error {
 			if err := send(m); err != nil {
 				return err
 			}
+
 			continue
 		default:
 		}
+
 		select {
 		case <-ctx.Done():
 			return nil
@@ -234,6 +244,7 @@ func (l *latest) put(key string, m *pb.AgentMessage) {
 	if _, ok := l.items[key]; !ok {
 		l.order = append(l.order, key)
 	}
+
 	l.items[key] = m
 	l.mu.Unlock()
 	select {
@@ -249,7 +260,9 @@ func (l *latest) drain() []*pb.AgentMessage {
 	for _, k := range l.order {
 		out = append(out, l.items[k])
 	}
+
 	l.items = map[string]*pb.AgentMessage{}
 	l.order = l.order[:0]
+
 	return out
 }
