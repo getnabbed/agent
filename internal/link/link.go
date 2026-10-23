@@ -364,8 +364,13 @@ func (c *Client) hello(ctx context.Context, tok auth.AccessToken) (*pb.AgentMess
 	signedAt := c.cfg.Clock.Now().UnixMilli()
 	sig := c.cfg.Signer.Sign(identity.HelloSigningInput(tok.JTI, c.instanceID, signedAt))
 
+	// The header carries the signed time too, so a gateway that verifies
+	// against header.timestamp_ms rather than signed_at_ms sees the same value.
+	h := c.header("")
+	h.TimestampMs = signedAt
+
 	return &pb.AgentMessage{
-		Header: c.header(""),
+		Header: h,
 		Kind: &pb.AgentMessage_Hello{Hello: &pb.Hello{
 			Version:           c.cfg.Version,
 			Capabilities:      c.cfg.Capabilities,
