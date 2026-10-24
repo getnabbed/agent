@@ -261,6 +261,12 @@ func (c *Client) Run(ctx context.Context) error {
 			lvl = slog.LevelInfo
 		}
 
+		// A draining gateway refuses new streams with UNAVAILABLE during a
+		// rollout. One refusal is routine; repeated ones are an outage.
+		if status.Code(err) == codes.Unavailable && attempt <= 1 {
+			lvl = slog.LevelInfo
+		}
+
 		c.log.Log(ctx, lvl, "session ended; reconnecting", "err", err, "in", delay.Round(time.Millisecond))
 		if err := sleep(ctx, delay); err != nil {
 			return nil
