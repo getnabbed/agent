@@ -83,3 +83,22 @@ func TestInputSliceConstants(t *testing.T) {
 		t.Fatal("got wrong coefficients for exponents 0, 65535 or slice 0")
 	}
 }
+
+func BenchmarkMulAdd(b *testing.B) {
+	g := gf()
+	src := make([]uint16, 1<<19)
+	dst := make([]uint16, len(src))
+
+	for i := range src {
+		src[i] = uint16(i * 7919)
+	}
+
+	var tab mulTable
+	g.table(12345, &tab)
+
+	b.SetBytes(int64(2 * len(src)))
+
+	for b.Loop() {
+		mulAdd(dst, src, &tab)
+	}
+}

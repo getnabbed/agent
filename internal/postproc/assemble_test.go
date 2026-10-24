@@ -109,7 +109,7 @@ func damaged() []byte {
 	return d
 }
 
-func TestRepairableDamageFailsRetryably(t *testing.T) {
+func TestRepairWithoutFetcherFailsRetryably(t *testing.T) {
 	j, res := job(t, map[string][]byte{"obf1": damaged(), "obf2": seq(300)})
 	res.MissingArticles = 1
 	res.Deferred = []string{"release.vol0+2.par2", "release.vol2+1.par2"}
@@ -117,8 +117,8 @@ func TestRepairableDamageFailsRetryably(t *testing.T) {
 	_, err := assemble(j, res)
 
 	var f *engine.Failure
-	if !errors.As(err, &f) || f.Class != pb.FailureClass_FAILURE_CLASS_REPAIR || !f.Retryable || !strings.Contains(f.Detail, "1 of 3") {
-		t.Fatalf("got %v, want a retryable REPAIR failure needing 1 of 3 blocks", err)
+	if !errors.As(err, &f) || f.Class != pb.FailureClass_FAILURE_CLASS_REPAIR || !f.Retryable || !strings.Contains(f.Detail, "need 1 recovery blocks; 0 are on disk and this agent cannot fetch") {
+		t.Fatalf("got %v, want a retryable REPAIR failure: the 3 deferred blocks would do, given a fetcher", err)
 	}
 
 	// The intact file still got its name back, so a retry starts from it.

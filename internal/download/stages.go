@@ -21,15 +21,16 @@ type Importer interface {
 	Import(ctx context.Context, job engine.Job, res *engine.Result, d *pb.Download) error
 }
 
-// PassthroughAssembler accepts complete engine output as-is. Without PAR2
-// repair it cannot recover missing usenet articles.
+// PassthroughAssembler accepts complete engine output as-is. It does no PAR2
+// repair, so it cannot recover missing usenet articles; postproc.Assembler
+// can.
 type PassthroughAssembler struct{}
 
 // Assemble implements Assembler.
 func (PassthroughAssembler) Assemble(_ context.Context, _ engine.Job, res *engine.Result) (*engine.Result, error) {
 	if res.MissingArticles > 0 {
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_INCOMPLETE, false,
-			"%d articles missing and PAR2 repair is not implemented yet", res.MissingArticles)
+			"%d articles missing and this assembler does no PAR2 repair", res.MissingArticles)
 	}
 
 	return nil, nil

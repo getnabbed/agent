@@ -68,8 +68,10 @@ func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc 
 		Fetcher:       &download.HTTPFetcher{API: api, Client: hc, Tokens: tokens},
 		Dir:           f.downloadDir,
 		MaxConcurrent: f.maxDownloads,
-		Assembler:     &postproc.Assembler{Log: e.log},
-		Log:           e.log,
+		// The usenet engine fetches the PAR2 volumes it deferred when repair
+		// needs them.
+		Assembler: &postproc.Assembler{Log: e.log, Fetcher: nntp},
+		Log:       e.log,
 	})
 	if err != nil {
 		_ = bt.Close()

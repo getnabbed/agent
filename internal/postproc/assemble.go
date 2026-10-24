@@ -1,7 +1,7 @@
 // Package postproc turns what an engine downloaded into complete files:
-// PAR2 verification and name restoration, then RAR, 7z and ZIP extraction
-// (design 0005). PAR2 repair is not implemented yet. It works only inside
-// the job's work directory, through os.Root.
+// PAR2 verification and name restoration, PAR2 repair with recovery
+// volumes fetched on demand, then RAR, 7z and ZIP extraction (design 0005).
+// It works only inside the job's work directory, through os.Root.
 package postproc
 
 import (
@@ -27,11 +27,16 @@ import (
 const maxIndexBytes = 32 << 20
 
 // Assembler verifies downloads against their PAR2 recovery set, restores
-// obfuscated file names, extracts RAR, 7z and ZIP archives into
-// extracted/, and then deletes the archives and PAR2 files. It implements
-// download.Assembler.
+// obfuscated file names, repairs damaged and missing files, extracts RAR,
+// 7z and ZIP archives into extracted/, and then deletes the archives and
+// PAR2 files. It implements download.Assembler.
 type Assembler struct {
 	Log *slog.Logger
+	// Fetcher downloads recovery volumes the engine deferred, when repair
+	// needs them. Without one, only volumes already on disk are used.
+	Fetcher Fetcher
+	// RepairMemory bounds the memory PAR2 repair uses; 0 means 256 MiB.
+	RepairMemory int64
 	// MaxEntries caps files and directories per job's archives; 0 means
 	// 10000.
 	MaxEntries int
@@ -39,6 +44,18 @@ type Assembler struct {
 	// 0 means 1 GiB. Releases are mostly stored uncompressed, so more than
 	// that is a decompression bomb.
 	Slack int64
+
+	// repairProgress, if set, is called after each repair pass (tests).
+	repairProgress func(done, total int)
+}
+
+// Fetcher downloads files an engine deliberately left out of a job, such as
+// PAR2 recovery volumes. The usenet engine implements it.
+type Fetcher interface {
+	// FetchFiles downloads the named files, as listed in the engine
+	// result's Deferred, into the job's work directory. The result lists
+	// the paths written; MissingArticles counts parts no provider had.
+	FetchFiles(ctx context.Context, job engine.Job, names []string) (*engine.Result, error)
 }
 
 // Assemble implements download.Assembler. It can run again on its own
@@ -91,7 +108,7 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 		return a.unpack(ctx, root, files, par2Files, log)
 	}
 
-	set, err := readSet(root, index)
+	p, set, err := readSet(root, index)
 	if err != nil {
 		log.Warn("cannot read PAR2 index", "err", err)
 
@@ -141,36 +158,36 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 		return a.unpack(ctx, root, current, par2Files, log)
 	}
 
-	available := len(set.RecoveryExponents)
-	for _, name := range res.Deferred {
-		if n, ok := par2.VolumeBlocks(name); ok {
-			available += n
+	// Repair works on the files where they are now.
+	for i, r := range rep.Files {
+		if to, ok := renamed[r.Found]; ok {
+			rep.Files[i].Found = to
 		}
 	}
 
-	damaged, missing := 0, 0
-	for _, r := range rep.Files {
-		switch r.Status {
-		case par2.Damaged:
-			damaged++
-		case par2.Missing:
-			missing++
+	r := &repair{
+		a: a, job: job, res: res, root: root, parser: p, set: set, rep: rep,
+		targets: targets, volumes: volumes, log: log,
+	}
+
+	if err := r.run(ctx); err != nil {
+		return nil, err
+	}
+
+	// Repair may have created files and fetched volumes; list them afresh.
+	files, err = listFiles(root, res)
+	if err != nil {
+		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "list files: %v", err)
+	}
+
+	par2Files = par2Files[:0]
+	for _, f := range files {
+		if strings.EqualFold(path.Ext(f), ".par2") {
+			par2Files = append(par2Files, f)
 		}
 	}
 
-	log.Warn("par2 verification failed", "damaged_files", damaged, "missing_files", missing,
-		"blocks_needed", rep.Needed, "blocks_available", available)
-
-	if rep.Needed > available {
-		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_INCOMPLETE, false,
-			"%d damaged and %d missing files need %d recovery blocks; the release has %d", damaged, missing, rep.Needed, available)
-	}
-
-	// Repairable once repair ships: retrying then finishes from the data on
-	// disk.
-	return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_REPAIR, true,
-		"%d damaged and %d missing files need %d of %d recovery blocks, and PAR2 repair is not implemented yet",
-		damaged, missing, rep.Needed, available)
+	return a.unpack(ctx, root, files, par2Files, log)
 }
 
 // withoutPar2 decides a release that has no usable PAR2 index: it can
@@ -245,24 +262,28 @@ func listFiles(root *os.Root, res *engine.Result) ([]string, error) {
 	return out, nil
 }
 
-func readSet(root *os.Root, index []string) (*par2.Set, error) {
+// readSet parses the index files. The parser is returned so repair can add
+// volumes to it.
+func readSet(root *os.Root, index []string) (*par2.Parser, *par2.Set, error) {
 	p := par2.NewParser()
 
 	for _, name := range index {
 		f, err := root.Open(name)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		err = p.Read(io.LimitReader(f, maxIndexBytes))
 		_ = f.Close()
 
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
+			return nil, nil, fmt.Errorf("%s: %w", name, err)
 		}
 	}
 
-	return p.Set()
+	set, err := p.Set()
+
+	return p, set, err
 }
 
 // uniqueTarget keeps two recovery-set files from claiming the same
