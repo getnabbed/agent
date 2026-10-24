@@ -227,8 +227,30 @@ type workItem struct {
 	segment   Segment
 }
 
-// Download implements engine.Engine.
+// Download implements engine.Engine. PAR2 recovery volumes are not
+// downloaded; they are listed in the result's Deferred for FetchFiles.
 func (e *Engine) Download(ctx context.Context, job engine.Job, progress func(engine.Progress)) (*engine.Result, error) {
+	return e.start(ctx, job, checkpointName, func(name string) bool { return !IsPAR2Volume(name) }, progress)
+}
+
+// FetchFiles downloads the named files of job's NZB into the work
+// directory, as Download would have: typically the PAR2 recovery volumes it
+// deferred, once repair needs them. Names are those Download reported;
+// others are ignored. It uses the same provider pools as downloads and
+// resumes from its own checkpoint. The result lists the files fetched, and
+// MissingArticles counts articles no provider had.
+func (e *Engine) FetchFiles(ctx context.Context, job engine.Job, names []string) (*engine.Result, error) {
+	want := map[string]bool{}
+	for _, n := range names {
+		want[n] = true
+	}
+
+	return e.start(ctx, job, fetchCheckpointName, func(name string) bool { return want[name] }, nil)
+}
+
+// start downloads the files of job's NZB that want accepts, tracking
+// progress in the checkpoint file ckptName.
+func (e *Engine) start(ctx context.Context, job engine.Job, ckptName string, want func(name string) bool, progress func(engine.Progress)) (*engine.Result, error) {
 	route := e.route(job.SourceID)
 
 	workers := 0
@@ -254,7 +276,7 @@ func (e *Engine) Download(ctx context.Context, job engine.Job, progress func(eng
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_PAYLOAD, false, "%v", err)
 	}
 
-	ckpt, err := loadCheckpoint(root)
+	ckpt, err := loadCheckpoint(root, ckptName)
 	if err != nil {
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "read checkpoint: %v", err)
 	}
@@ -273,7 +295,7 @@ func (e *Engine) Download(ctx context.Context, job engine.Job, progress func(eng
 	defer func() { _ = data.Close() }()
 
 	d := &download{
-		e: e, root: root, data: data, nzb: nzb, route: route, workers: workers, ckpt: ckpt,
+		e: e, root: root, data: data, nzb: nzb, route: route, workers: workers, ckpt: ckpt, ckptName: ckptName, want: want,
 		files: map[int]*os.File{},
 		sizes: map[int]int64{},
 	}
@@ -347,6 +369,9 @@ type download struct {
 	route   []*pool
 	workers int
 	ckpt    *checkpoint
+	// ckptName is the checkpoint file; want selects the NZB files to fetch.
+	ckptName string
+	want     func(name string) bool
 
 	filesMu sync.Mutex
 	files   map[int]*os.File
@@ -367,8 +392,11 @@ func (d *download) run(ctx context.Context, progress func(engine.Progress)) (*en
 	)
 
 	for i, f := range d.nzb.Files {
-		if IsPAR2Volume(f.Name) {
-			result.Deferred = append(result.Deferred, f.Name)
+		if !d.want(f.Name) {
+			if IsPAR2Volume(f.Name) {
+				result.Deferred = append(result.Deferred, f.Name)
+			}
+
 			continue
 		}
 
@@ -676,7 +704,7 @@ func (d *download) flush() error {
 	}
 	d.filesMu.Unlock()
 
-	return writeCheckpoint(d.root, raw)
+	return writeCheckpoint(d.root, d.ckptName, raw)
 }
 
 func (d *download) closeFiles() error {

@@ -8,7 +8,12 @@ import (
 	"sync"
 )
 
-const checkpointName = ".nabbed-usenet.json"
+const (
+	checkpointName = ".nabbed-usenet.json"
+	// fetchCheckpointName tracks FetchFiles, so fetching deferred files never
+	// disturbs the download's own checkpoint.
+	fetchCheckpointName = ".nabbed-usenet-fetch.json"
+)
 
 // checkpoint records which segments are on disk, so a restarted download
 // skips them. It is saved only after the data files have been fsynced.
@@ -70,10 +75,10 @@ func (c *checkpoint) size(file int) int64 {
 	return 0
 }
 
-func loadCheckpoint(root *os.Root) (*checkpoint, error) {
+func loadCheckpoint(root *os.Root, name string) (*checkpoint, error) {
 	c := &checkpoint{Files: map[int]*fileState{}}
 
-	raw, err := root.ReadFile(checkpointName)
+	raw, err := root.ReadFile(name)
 	if errors.Is(err, fs.ErrNotExist) {
 		return c, nil
 	}
@@ -99,11 +104,11 @@ func (c *checkpoint) snapshot() ([]byte, error) {
 }
 
 // write stores a snapshot taken earlier.
-func writeCheckpoint(root *os.Root, raw []byte) error {
-	tmp := checkpointName + ".tmp"
+func writeCheckpoint(root *os.Root, name string, raw []byte) error {
+	tmp := name + ".tmp"
 	if err := root.WriteFile(tmp, raw, 0o600); err != nil {
 		return err
 	}
 
-	return root.Rename(tmp, checkpointName)
+	return root.Rename(tmp, name)
 }
