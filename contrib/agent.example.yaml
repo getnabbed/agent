@@ -39,4 +39,9 @@ torrent:
 #   # TEMPORARY until providers are configured in the web app and sealed to
 #   # this agent. Prefer NABBED_NNTP_FILE pointing at a secret over putting
 #   # the password here.
-#   provider: nntps://user:password@news.example.com:563?connections=8
+#   # Several providers are separated by spaces, in priority order. A backup
+#   # (block account) is used only for articles the others lack or serve
+#   # damaged. connections= is the account limit, shared by all downloads.
+#   provider: >-
+#     nntps://user:password@news.example.com:563?connections=20
+#     nntps://user:password@block.example.net:563?connections=8&backup=true

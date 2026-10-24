@@ -166,8 +166,17 @@ func buildJob(t *testing.T, s *fakeNNTP, files map[string][]byte, partSize int, 
 	return engine.Job{ID: "d1", Dir: dir, PayloadPath: filepath.Join(dir, "payload.nzb")}, files
 }
 
-func newTestEngine(p Provider) *Engine {
-	return New(func(context.Context, string) (Provider, error) { return p, nil }, func() bool { return true }, slog.New(slog.DiscardHandler))
+func newTestEngine(t *testing.T, providers ...Provider) *Engine {
+	t.Helper()
+
+	e := New(slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { _ = e.Close() })
+
+	for i, p := range providers {
+		e.SetProvider(fmt.Sprintf("p%d", i), p)
+	}
+
+	return e
 }
 
 func randBytes(n int) []byte {
@@ -186,7 +195,7 @@ func TestDownloadAssemblesFiles(t *testing.T) {
 	}, 16_000, nil)
 
 	var last engine.Progress
-	res, err := newTestEngine(s.provider("u", "p", 4)).Download(context.Background(), job, func(p engine.Progress) { last = p })
+	res, err := newTestEngine(t, s.provider("u", "p", 4)).Download(context.Background(), job, func(p engine.Progress) { last = p })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +226,7 @@ func TestMissingArticleIsReportedNotFatal(t *testing.T) {
 	s := newFakeNNTP(t, "", "")
 	job, _ := buildJob(t, s, map[string][]byte{"a.bin": randBytes(50_000)}, 10_000, map[string]bool{"a.bin-3@test": true})
 
-	res, err := newTestEngine(s.provider("", "", 2)).Download(context.Background(), job, nil)
+	res, err := newTestEngine(t, s.provider("", "", 2)).Download(context.Background(), job, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +240,7 @@ func TestBadCredentialsFailFast(t *testing.T) {
 	s := newFakeNNTP(t, "u", "right")
 	job, _ := buildJob(t, s, map[string][]byte{"a.bin": randBytes(30_000)}, 10_000, nil)
 
-	_, err := newTestEngine(s.provider("u", "wrong", 2)).Download(context.Background(), job, nil)
+	_, err := newTestEngine(t, s.provider("u", "wrong", 2)).Download(context.Background(), job, nil)
 
 	var f *engine.Failure
 	if !errors.As(err, &f) || f.Class != pb.FailureClass_FAILURE_CLASS_CLIENT || f.Retryable {
@@ -242,7 +251,7 @@ func TestBadCredentialsFailFast(t *testing.T) {
 func TestResumeSkipsCheckpointedSegments(t *testing.T) {
 	s := newFakeNNTP(t, "", "")
 	job, files := buildJob(t, s, map[string][]byte{"a.bin": randBytes(80_000)}, 10_000, nil)
-	e := newTestEngine(s.provider("", "", 1))
+	e := newTestEngine(t, s.provider("", "", 1))
 
 	if _, err := e.Download(context.Background(), job, nil); err != nil {
 		t.Fatal(err)
@@ -272,7 +281,7 @@ func TestCancelReturnsContextError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := newTestEngine(s.provider("", "", 2)).Download(ctx, job, nil); !errors.Is(err, context.Canceled) {
+	if _, err := newTestEngine(t, s.provider("", "", 2)).Download(ctx, job, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
@@ -334,7 +343,7 @@ func TestPayloadCannotBeOverwritten(t *testing.T) {
 
 	before, _ := os.ReadFile(job.PayloadPath)
 
-	res, err := newTestEngine(s.provider("", "", 1)).Download(context.Background(), job, nil)
+	res, err := newTestEngine(t, s.provider("", "", 1)).Download(context.Background(), job, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +373,7 @@ func TestInflatedYEncSizeIsDiscarded(t *testing.T) {
 
 	job := engine.Job{ID: "h", Dir: dir, PayloadPath: filepath.Join(dir, "payload.nzb")}
 
-	res, err := newTestEngine(s.provider("", "", 1)).Download(context.Background(), job, nil)
+	res, err := newTestEngine(t, s.provider("", "", 1)).Download(context.Background(), job, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +401,7 @@ func TestPartsMustAgreeOnFileSize(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := newTestEngine(s.provider("", "", 1)).Download(context.Background(), engine.Job{ID: "c", Dir: dir, PayloadPath: filepath.Join(dir, "payload.nzb")}, nil)
+	res, err := newTestEngine(t, s.provider("", "", 1)).Download(context.Background(), engine.Job{ID: "c", Dir: dir, PayloadPath: filepath.Join(dir, "payload.nzb")}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

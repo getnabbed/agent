@@ -93,6 +93,12 @@ agent, set one with `NABBED_NNTP_FILE` (preferred) or `NABBED_NNTP`:
 `nntps://user:password@news.example.com:563?connections=8`. Flag values are
 visible in process lists, so avoid `--nntp` for real passwords.
 
+Separate several providers with spaces, in priority order. Each article is
+tried on them in turn when one lacks it or serves it damaged. Add
+`backup=true` to a block account so it is used only for those gaps.
+`connections` is the account's limit and is shared by every download; if
+the provider allows fewer, the agent notices and uses fewer.
+
 ## Other ways to install
 
 Signed binaries for Linux (amd64, arm64, armv7), macOS and Windows are on

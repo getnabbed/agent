@@ -17,6 +17,13 @@ type fakeNNTP struct {
 	mu       sync.Mutex
 	articles map[string][]byte
 	bodies   atomic.Int64
+
+	// maxConns, when set, refuses connections beyond it the way providers
+	// do: "502 Too many connections" at the greeting.
+	maxConns int
+	active   int
+	peak     int
+	accepted int
 }
 
 func newFakeNNTP(t *testing.T, user, pass string) *fakeNNTP {
@@ -60,6 +67,27 @@ func (s *fakeNNTP) serve(c net.Conn) {
 	defer func() { _ = c.Close() }()
 
 	tp := textproto.NewConn(c)
+
+	s.mu.Lock()
+	s.accepted++
+	full := s.maxConns > 0 && s.active >= s.maxConns
+	if !full {
+		s.active++
+		s.peak = max(s.peak, s.active)
+	}
+	s.mu.Unlock()
+
+	if full {
+		_ = tp.PrintfLine("502 Too many connections")
+		return
+	}
+
+	defer func() {
+		s.mu.Lock()
+		s.active--
+		s.mu.Unlock()
+	}()
+
 	_ = tp.PrintfLine("200 fake ready")
 
 	authed := s.user == ""
@@ -117,4 +145,17 @@ func (s *fakeNNTP) serve(c net.Conn) {
 			_ = tp.PrintfLine("500 unknown")
 		}
 	}
+}
+
+func (s *fakeNNTP) stats() (peak, accepted int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.peak, s.accepted
+}
+
+func (s *fakeNNTP) limit(n int) {
+	s.mu.Lock()
+	s.maxConns = n
+	s.mu.Unlock()
 }

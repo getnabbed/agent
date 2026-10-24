@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"path"
 	"sync"
@@ -17,41 +16,164 @@ import (
 )
 
 const (
-	segmentAttempts    = 4
-	maxDialFailures    = 5
+	// segmentAttempts bounds tries of one article on one provider after
+	// connection errors. Missing or damaged articles move to the next
+	// provider at once.
+	segmentAttempts    = 3
 	checkpointInterval = 5 * time.Second
 	progressInterval   = time.Second
+	janitorInterval    = 30 * time.Second
 )
 
-// ResolveFunc returns the provider for a download's source id.
-type ResolveFunc func(ctx context.Context, sourceID string) (Provider, error)
-
-// ErrNoProvider means no usenet provider is configured for the source.
+// ErrNoProvider means no usenet provider is configured.
 var ErrNoProvider = errors.New("no usenet provider configured")
 
-// Engine is the native usenet engine.
+// Engine is the native usenet engine. It owns one connection pool per
+// provider, shared by every download.
 type Engine struct {
-	resolve   ResolveFunc
-	available func() bool
-	timeout   time.Duration
-	log       *slog.Logger
+	timeout time.Duration
+	backoff func(failures int) time.Duration
+	log     *slog.Logger
+
+	mu        sync.Mutex
+	providers []*registered // priority order
+	stop      chan struct{}
+	stopped   chan struct{}
 }
 
-// New returns an Engine. available reports whether any provider exists,
-// for Hello capabilities.
-func New(resolve ResolveFunc, available func() bool, log *slog.Logger) *Engine {
+type registered struct {
+	id   string
+	pool *pool
+}
+
+// New returns an Engine with no providers. Call Close to release
+// connections.
+func New(log *slog.Logger) *Engine {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	return &Engine{resolve: resolve, available: available, timeout: 60 * time.Second, log: log.With("engine", "usenet")}
+	e := &Engine{timeout: 60 * time.Second, backoff: dialBackoff, log: log.With("engine", "usenet"), stop: make(chan struct{}), stopped: make(chan struct{})}
+
+	go e.janitor()
+
+	return e
+}
+
+// SetProvider adds or replaces provider id. Providers are tried in the
+// order they were first added. Downloads in progress keep the pool they
+// started with until they finish.
+func (e *Engine) SetProvider(id string, p Provider) {
+	pl := newPool(p, e.timeout, e.log)
+	pl.backoff = e.backoff
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	for _, r := range e.providers {
+		if r.id == id {
+			r.pool.close()
+			r.pool = pl
+
+			return
+		}
+	}
+
+	e.providers = append(e.providers, &registered{id: id, pool: pl})
+}
+
+// RemoveProvider removes provider id.
+func (e *Engine) RemoveProvider(id string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	for i, r := range e.providers {
+		if r.id == id {
+			r.pool.close()
+			e.providers = append(e.providers[:i], e.providers[i+1:]...)
+
+			return
+		}
+	}
+}
+
+// Close closes every provider's connections.
+func (e *Engine) Close() error {
+	e.mu.Lock()
+	select {
+	case <-e.stop:
+	default:
+		close(e.stop)
+	}
+
+	for _, r := range e.providers {
+		r.pool.close()
+	}
+	e.mu.Unlock()
+
+	<-e.stopped
+
+	return nil
+}
+
+func (e *Engine) janitor() {
+	defer close(e.stopped)
+
+	t := time.NewTicker(janitorInterval)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-e.stop:
+			return
+		case <-t.C:
+			e.mu.Lock()
+			for _, r := range e.providers {
+				r.pool.closeIdle()
+			}
+			e.mu.Unlock()
+		}
+	}
+}
+
+// route returns the pools to try for a job, in order: the job's own source,
+// the other primaries, then backups.
+func (e *Engine) route(sourceID string) []*pool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	var first, primaries, backups []*pool
+
+	for _, r := range e.providers {
+		switch {
+		case r.id == sourceID && !r.pool.p.Backup:
+			first = append(first, r.pool)
+		case r.pool.p.Backup:
+			backups = append(backups, r.pool)
+		default:
+			primaries = append(primaries, r.pool)
+		}
+	}
+
+	return append(append(first, primaries...), backups...)
 }
 
 // Protocol implements engine.Engine.
 func (e *Engine) Protocol() pb.Protocol { return pb.Protocol_PROTOCOL_USENET }
 
-// Available implements engine.Engine.
-func (e *Engine) Available() bool { return e.available != nil && e.available() }
+// Available implements engine.Engine: at least one primary provider exists.
+func (e *Engine) Available() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	for _, r := range e.providers {
+		if !r.pool.p.Backup {
+			return true
+		}
+	}
+
+	return false
+}
 
 type workItem struct {
 	file, seg int
@@ -60,6 +182,19 @@ type workItem struct {
 
 // Download implements engine.Engine.
 func (e *Engine) Download(ctx context.Context, job engine.Job, progress func(engine.Progress)) (*engine.Result, error) {
+	route := e.route(job.SourceID)
+
+	workers := 0
+	for _, pl := range route {
+		if !pl.p.Backup {
+			workers += max(pl.p.Connections, 1)
+		}
+	}
+
+	if workers == 0 {
+		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, false, "%v", ErrNoProvider)
+	}
+
 	root, err := os.OpenRoot(job.Dir)
 	if err != nil {
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "open work dir: %v", err)
@@ -70,11 +205,6 @@ func (e *Engine) Download(ctx context.Context, job engine.Job, progress func(eng
 	nzb, err := e.readNZB(root, job.PayloadPath)
 	if err != nil {
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_PAYLOAD, false, "%v", err)
-	}
-
-	provider, err := e.resolve(ctx, job.SourceID)
-	if err != nil {
-		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, false, "%v", err)
 	}
 
 	ckpt, err := loadCheckpoint(root)
@@ -96,7 +226,7 @@ func (e *Engine) Download(ctx context.Context, job engine.Job, progress func(eng
 	defer func() { _ = data.Close() }()
 
 	d := &download{
-		e: e, root: root, data: data, nzb: nzb, provider: provider, ckpt: ckpt,
+		e: e, root: root, data: data, nzb: nzb, route: route, workers: workers, ckpt: ckpt,
 		files: map[int]*os.File{},
 		sizes: map[int]int64{},
 	}
@@ -163,12 +293,13 @@ func (e *Engine) readNZB(root *os.Root, payloadPath string) (*NZB, error) {
 
 // download is one run of one job.
 type download struct {
-	e        *Engine
-	root     *os.Root // work dir: payload and checkpoint
-	data     *os.Root // work dir/data: downloaded files only
-	nzb      *NZB
-	provider Provider
-	ckpt     *checkpoint
+	e       *Engine
+	root    *os.Root // work dir: payload and checkpoint
+	data    *os.Root // work dir/data: downloaded files only
+	nzb     *NZB
+	route   []*pool
+	workers int
+	ckpt    *checkpoint
 
 	filesMu sync.Mutex
 	files   map[int]*os.File
@@ -214,7 +345,7 @@ func (d *download) run(ctx context.Context, progress func(engine.Progress)) (*en
 	items := make(chan workItem)
 	var wg sync.WaitGroup
 
-	workers := min(max(d.provider.Connections, 1), max(len(work), 1))
+	workers := min(d.workers, max(len(work), 1))
 	for range workers {
 		wg.Add(1)
 		go func() {
@@ -281,95 +412,140 @@ feed:
 	return &result, nil
 }
 
-// worker owns one NNTP connection and processes segments until items is
-// closed or the run is cancelled.
+// worker processes segments until items is closed or the run is cancelled.
+// Connections come from the shared pools, one per article.
 func (d *download) worker(ctx context.Context, fatal context.CancelCauseFunc, items <-chan workItem) {
-	var (
-		c         *conn
-		stopClose func() bool
-		dialFails int
-	)
-
-	disconnect := func() {
-		if c != nil {
-			stopClose()
-			_ = c.close()
-			c = nil
-		}
-	}
-
-	defer disconnect()
-
 	for it := range items {
-		for attempt := 0; attempt < segmentAttempts; attempt++ {
-			if ctx.Err() != nil {
-				return
-			}
+		err := d.fetch(ctx, it)
 
-			if c == nil {
-				var err error
-
-				c, err = dial(ctx, d.provider, d.e.timeout)
-				if errors.Is(err, ErrAuth) {
-					fatal(engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, false, "usenet provider rejected the credentials"))
-					return
-				}
-
-				if err != nil {
-					dialFails++
-					if dialFails >= maxDialFailures {
-						fatal(engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, true, "cannot connect to usenet provider: %v", err))
-						return
-					}
-
-					sleep(ctx, time.Duration(dialFails)*time.Second)
-
-					continue
-				}
-
-				dialFails = 0
-				// Closing the socket unblocks a read stuck on a cancelled run.
-				conn := c
-				stopClose = context.AfterFunc(ctx, func() { _ = conn.nc.Close() })
-			}
-
-			done, err := d.fetch(c, it)
-			if done {
-				break
-			}
-
-			if errors.Is(err, ErrArticleNotFound) || errors.Is(err, errBadPart) {
-				if errors.Is(err, errBadPart) {
-					d.e.log.Warn("discarding article", "message_id", it.segment.MessageID, "err", err)
-				}
-
-				d.missing.Add(1)
-				break
-			}
-
-			var de *diskError
-			if errors.As(err, &de) {
-				fatal(engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "write: %v", de.err))
-				return
-			}
-
-			var ne net.Error
-			if errors.As(err, &ne) || errors.Is(err, ErrAuth) || isConnErr(err) {
-				disconnect()
-			}
-
-			if attempt == segmentAttempts-1 {
-				d.e.log.Warn("giving up on article", "message_id", it.segment.MessageID, "err", err)
-				d.missing.Add(1)
-			}
+		var f *engine.Failure
+		switch {
+		case err == nil:
+		case ctx.Err() != nil:
+			return
+		case errors.As(err, &f):
+			fatal(f)
+			return
+		default:
+			d.missing.Add(1)
 		}
 	}
 }
 
+// fetch tries the article on each provider in route order. It returns nil
+// when written, a *engine.Failure when the download cannot continue, or
+// another error when no provider could supply the article.
+func (d *download) fetch(ctx context.Context, it workItem) error {
+	var (
+		lastErr    error
+		primaryOK  bool
+		primaryErr error
+	)
+
+	for _, pl := range d.route {
+		err := d.fetchFrom(ctx, pl, it)
+		if err == nil {
+			return nil
+		}
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		var de *diskError
+		if errors.As(err, &de) {
+			return engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "write: %v", de.err)
+		}
+
+		switch {
+		case errors.Is(err, ErrAuth) && !pl.p.Backup:
+			return engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, false, "usenet provider %s rejected the credentials", pl.p.Host)
+		case errors.Is(err, ErrAuth), errors.Is(err, ErrProviderDown), errors.Is(err, errPoolClosed):
+			// Unusable provider: try the next. A down primary only fails the
+			// download once every primary is down.
+			if !pl.p.Backup {
+				primaryErr = err
+			}
+		default:
+			if !pl.p.Backup {
+				primaryOK = true
+			}
+
+			if errors.Is(err, errDamaged) {
+				d.e.log.Debug("damaged article; trying next provider", "message_id", it.segment.MessageID, "provider", pl.p.Host, "err", err)
+			}
+		}
+
+		lastErr = err
+	}
+
+	if !primaryOK && primaryErr != nil && d.allPrimariesDown() {
+		return engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, true, "cannot reach any usenet provider: %v", primaryErr)
+	}
+
+	if !errors.Is(lastErr, ErrArticleNotFound) {
+		d.e.log.Warn("giving up on article", "message_id", it.segment.MessageID, "err", lastErr)
+	}
+
+	return lastErr
+}
+
+func (d *download) allPrimariesDown() bool {
+	for _, pl := range d.route {
+		if !pl.p.Backup && !pl.down() {
+			return false
+		}
+	}
+
+	return true
+}
+
+// errDamaged marks an article that arrived but failed its checksum or
+// contradicts the NZB. Another provider may hold a good copy.
+var errDamaged = errors.New("damaged article")
+
+// fetchFrom fetches one article from one provider, retrying only errors
+// that leave the connection in an unknown state.
+func (d *download) fetchFrom(ctx context.Context, pl *pool, it workItem) error {
+	var err error
+
+	for range segmentAttempts {
+		var c *conn
+
+		c, err = pl.get(ctx)
+		if err != nil {
+			return err
+		}
+
+		// Closing the socket unblocks a read stuck on a cancelled run.
+		stop := context.AfterFunc(ctx, func() { _ = c.nc.Close() })
+
+		var body []byte
+		body, err = c.body(it.segment.MessageID)
+		if err == nil {
+			err = d.write(body, it)
+		}
+
+		pl.put(c, stop() && !isConnErr(err))
+
+		var de *diskError
+		switch {
+		case err == nil, errors.Is(err, ErrArticleNotFound), errors.Is(err, errDamaged), errors.As(err, &de):
+			return err
+		case ctx.Err() != nil:
+			return ctx.Err()
+		}
+	}
+
+	return err
+}
+
 // isConnErr reports whether err leaves the connection in an unknown state.
-// A bad checksum or a missing article does not.
+// A missing or damaged article, or a local write error, does not.
 func isConnErr(err error) bool {
-	return err != nil && !errors.Is(err, ErrYEncCRC) && !errors.Is(err, ErrArticleNotFound) && !errors.Is(err, errBadPart)
+	var de *diskError
+
+	return err != nil && !errors.Is(err, ErrArticleNotFound) && !errors.Is(err, errDamaged) && !errors.As(err, &de)
 }
 
 // diskError marks a local write failure, which no retry can fix.
@@ -379,35 +555,30 @@ func (e *diskError) Error() string { return e.err.Error() }
 
 func (e *diskError) Unwrap() error { return e.err }
 
-// fetch downloads, decodes and writes one segment.
-func (d *download) fetch(c *conn, it workItem) (bool, error) {
-	body, err := c.body(it.segment.MessageID)
-	if err != nil {
-		return false, err
-	}
-
+// write decodes one article and writes it at its offset.
+func (d *download) write(body []byte, it workItem) error {
 	part, err := DecodeYEnc(bytesReader(body))
 	if err != nil {
-		return false, err
+		return fmt.Errorf("%w: %w", errDamaged, err)
 	}
 
 	if err := d.claimSize(it.file, part.FileSize); err != nil {
-		return false, err
+		return fmt.Errorf("%w: %w", errDamaged, err)
 	}
 
 	f, err := d.file(it.file)
 	if err != nil {
-		return false, &diskError{err}
+		return &diskError{err}
 	}
 
 	if _, err := f.WriteAt(part.Data, part.Begin-1); err != nil {
-		return false, &diskError{err}
+		return &diskError{err}
 	}
 
 	d.ckpt.markDone(it.file, it.seg, part.FileSize)
 	d.doneBytes.Add(it.segment.Bytes)
 
-	return true, nil
+	return nil
 }
 
 func (d *download) file(i int) (*os.File, error) {
@@ -501,15 +672,5 @@ func (d *download) background(stop <-chan struct{}, total int64, progress func(e
 				progress(engine.Progress{Bytes: cur, Total: total, SpeedBps: speed})
 			}
 		}
-	}
-}
-
-func sleep(ctx context.Context, d time.Duration) {
-	t := time.NewTimer(d)
-	defer t.Stop()
-
-	select {
-	case <-ctx.Done():
-	case <-t.C:
 	}
 }

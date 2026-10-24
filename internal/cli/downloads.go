@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"net/http"
@@ -32,41 +31,29 @@ func (f *runFlags) register(fs *flag.FlagSet, cfg *config.Config) {
 	// No env default here: flag defaults are printed by -h, and this one holds a
 	// password. The env var is read in newDownloads instead.
 	fs.StringVar(&f.nntp, "nntp", "",
-		"TEMPORARY until sealed sources land: usenet provider as nntps://user:pass@host:563?connections=8.\n"+
+		"TEMPORARY until sealed sources land: usenet providers as nntps://user:pass@host:563?connections=8,\n"+
+			"space-separated in priority order; add &backup=true for fill-only block accounts.\n"+
 			"Prefer NABBED_NNTP or NABBED_NNTP_FILE: flag values are visible in process lists")
 }
 
 // newDownloads builds the engines and the download manager. The returned
 // func closes the engines.
 func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc *http.Client, tokens *auth.TokenSource) (*download.Manager, func(), error) {
-	var provider *usenet.Provider
-
-	nntpURL := f.nntp
-	if nntpURL == "" {
-		nntpURL = string(e.cfg.Usenet.Provider)
+	nntpURLs := f.nntp
+	if nntpURLs == "" {
+		nntpURLs = string(e.cfg.Usenet.Provider)
 	}
 
-	if nntpURL != "" {
-		p, err := usenet.ParseProviderURL(nntpURL)
-		if err != nil {
-			return nil, nil, fmt.Errorf("--nntp: %w", err)
-		}
-
-		provider = &p
-		e.log.Warn("using a usenet provider from --nntp; this is temporary until sources are sealed to the agent", "provider", p.String())
+	providers, err := usenet.ParseProviderList(nntpURLs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("usenet provider: %w", err)
 	}
 
-	nntp := usenet.New(
-		func(context.Context, string) (usenet.Provider, error) {
-			if provider == nil {
-				return usenet.Provider{}, usenet.ErrNoProvider
-			}
-
-			return *provider, nil
-		},
-		func() bool { return provider != nil },
-		e.log,
-	)
+	nntp := usenet.New(e.log)
+	for i, p := range providers {
+		nntp.SetProvider(fmt.Sprintf("config-%d", i+1), p)
+		e.log.Warn("using a usenet provider from configuration; this is temporary until sources are sealed to the agent", "provider", p.String())
+	}
 
 	bt := torrent.New(torrent.Config{ListenPort: f.torrentPort, AllowLAN: f.allowLAN, Log: e.log})
 	if f.allowLAN {
@@ -83,8 +70,13 @@ func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc 
 	})
 	if err != nil {
 		_ = bt.Close()
+		_ = nntp.Close()
+
 		return nil, nil, err
 	}
 
-	return m, func() { _ = bt.Close() }, nil
+	return m, func() {
+		_ = bt.Close()
+		_ = nntp.Close()
+	}, nil
 }

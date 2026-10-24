@@ -2,7 +2,7 @@
 
 Open source Go agent for Nabbed. Module `github.com/getnabbed/agent`.
 Design docs live in `docs/design/`. 0003 covers sessions, credentials and
-token refresh.
+token refresh; 0005 covers the usenet pipeline (NNTP, yEnc, PAR2, extraction).
 
 ## Commands
 

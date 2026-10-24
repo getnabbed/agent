@@ -10,6 +10,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -31,6 +32,9 @@ type Provider struct {
 	Username    string
 	Password    string
 	Connections int
+	// Backup providers are used only for articles the primaries lack or
+	// serve damaged, as with block accounts billed per byte.
+	Backup bool
 	// TLSConfig overrides the default verification, for tests.
 	TLSConfig *tls.Config
 }
@@ -42,7 +46,12 @@ func (p Provider) String() string {
 		scheme = "nntps"
 	}
 
-	return fmt.Sprintf("%s://%s@%s:%d (%d connections)", scheme, p.Username, p.Host, p.Port, p.Connections)
+	s := fmt.Sprintf("%s://%s@%s:%d (%d connections)", scheme, p.Username, p.Host, p.Port, p.Connections)
+	if p.Backup {
+		s += " backup"
+	}
+
+	return s
 }
 
 // ParseProviderURL parses nntps://user:pass@host:563?connections=8.
@@ -86,6 +95,12 @@ func ParseProviderURL(raw string) (Provider, error) {
 	if c := u.Query().Get("connections"); c != "" {
 		if p.Connections, err = strconv.Atoi(c); err != nil || p.Connections < 1 || p.Connections > 100 {
 			return Provider{}, errors.New("connections must be 1-100")
+		}
+	}
+
+	if b := u.Query().Get("backup"); b != "" {
+		if p.Backup, err = strconv.ParseBool(b); err != nil {
+			return Provider{}, errors.New("backup must be true or false")
 		}
 	}
 
@@ -138,6 +153,11 @@ func (c *conn) handshake(p Provider) error {
 	c.deadline()
 
 	if _, _, err := c.tp.ReadCodeLine(20); err != nil { // 200 or 201
+		var pe *textproto.Error
+		if errors.As(err, &pe) && isCapacity(pe.Code, pe.Msg) {
+			return fmt.Errorf("%w: %d %s", errCapacity, pe.Code, pe.Msg)
+		}
+
 		return fmt.Errorf("nntp greeting: %w", err)
 	}
 
@@ -145,16 +165,20 @@ func (c *conn) handshake(p Provider) error {
 		return nil
 	}
 
-	code, _, err := c.cmd("AUTHINFO USER %s", p.Username)
+	code, msg, err := c.cmd("AUTHINFO USER %s", p.Username)
 	if err != nil {
 		return err
 	}
 
 	if code == 381 {
-		code, _, err = c.cmd("AUTHINFO PASS %s", p.Password)
+		code, msg, err = c.cmd("AUTHINFO PASS %s", p.Password)
 		if err != nil {
 			return err
 		}
+	}
+
+	if code != 281 && isCapacity(code, msg) {
+		return fmt.Errorf("%w: %d %s", errCapacity, code, msg)
 	}
 
 	if code != 281 {
@@ -264,4 +288,35 @@ func isLoopbackHost(host string) bool {
 	ip := net.ParseIP(host)
 
 	return ip != nil && ip.IsLoopback()
+}
+
+// ParseProviderList parses whitespace-separated provider URLs. Order is
+// priority: earlier providers are tried first.
+func ParseProviderList(raw string) ([]Provider, error) {
+	var out []Provider
+
+	for i, f := range strings.Fields(raw) {
+		p, err := ParseProviderURL(f)
+		if err != nil {
+			return nil, fmt.Errorf("provider %d: %w", i+1, err)
+		}
+
+		out = append(out, p)
+	}
+
+	return out, nil
+}
+
+// isCapacity reports whether a refusal means "too many connections" rather
+// than bad credentials. Providers disagree on codes (400, 481, 482, 502),
+// so the message decides, except for 400 which RFC 3977 reserves for a
+// service temporarily unavailable.
+func isCapacity(code int, msg string) bool {
+	if code == 400 {
+		return true
+	}
+
+	m := strings.ToLower(msg)
+
+	return strings.Contains(m, "too many") || strings.Contains(m, "connection limit") || strings.Contains(m, "max connections")
 }
