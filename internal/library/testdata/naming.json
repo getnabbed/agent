@@ -1,0 +1,181 @@
+[
+  {
+    "name": "movie-year",
+    "kind": "MOVIES",
+    "naming": {
+      "media": {
+        "tmdb_id": 693134,
+        "tvdb_id": 0,
+        "imdb_id": "tt15239678"
+      },
+      "title": "Dune: Part Two",
+      "year": 2024,
+      "episodes": [],
+      "episode_titles": [],
+      "quality": {
+        "resolution": "1080p",
+        "source": "BluRay"
+      }
+    },
+    "folder_template": "{movie_title} ({year})",
+    "file_template": "{movie_title} ({year})",
+    "specials_folder": "",
+    "sanitizer": {
+      "replacement": " -",
+      "ascii_only": false
+    },
+    "expected_relative_path": "Dune - Part Two (2024)/Dune - Part Two (2024).mkv"
+  },
+  {
+    "name": "movie-edition",
+    "kind": "MOVIES",
+    "naming": {
+      "media": {
+        "tmdb_id": 78,
+        "tvdb_id": 0,
+        "imdb_id": "tt0083658"
+      },
+      "title": "Blade Runner",
+      "year": 1982,
+      "episodes": [],
+      "episode_titles": [],
+      "quality": {
+        "resolution": "1080p",
+        "source": "BluRay"
+      },
+      "edition": "Final Cut"
+    },
+    "folder_template": "{movie_title} ({year})",
+    "file_template": "{movie_title} ({year}) {edition}",
+    "specials_folder": "",
+    "sanitizer": {
+      "replacement": " -",
+      "ascii_only": false
+    },
+    "expected_relative_path": "Blade Runner (1982)/Blade Runner (1982) Final Cut.mkv"
+  },
+  {
+    "name": "tv-single-episode",
+    "kind": "TV",
+    "naming": {
+      "media": {
+        "tmdb_id": 0,
+        "tvdb_id": 403294,
+        "imdb_id": ""
+      },
+      "title": "The Bear",
+      "year": 2022,
+      "season": 3,
+      "episodes": [
+        1
+      ],
+      "episode_titles": [
+        "Tomorrow"
+      ],
+      "quality": {
+        "resolution": "1080p",
+        "source": "WEB-DL"
+      }
+    },
+    "folder_template": "{series_title} ({year})/Season {season:02}",
+    "file_template": "{series_title} - S{season:02}E{episode:02} - {episode_title}",
+    "specials_folder": "Specials",
+    "sanitizer": {
+      "replacement": " -",
+      "ascii_only": false
+    },
+    "expected_relative_path": "The Bear (2022)/Season 03/The Bear - S03E01 - Tomorrow.mkv"
+  },
+  {
+    "name": "sanitise-slash-colon-question",
+    "kind": "MOVIES",
+    "naming": {
+      "media": {
+        "tmdb_id": 41275,
+        "tvdb_id": 0,
+        "imdb_id": "tt0081133"
+      },
+      "title": "AC/DC: Let There Be Rock?",
+      "year": 1980,
+      "episodes": [],
+      "episode_titles": [],
+      "quality": {
+        "resolution": "1080p",
+        "source": "BluRay"
+      }
+    },
+    "folder_template": "{movie_title} ({year})",
+    "file_template": "{movie_title} ({year})",
+    "specials_folder": "",
+    "sanitizer": {
+      "replacement": "-",
+      "ascii_only": false
+    },
+    "expected_relative_path": "AC-DC- Let There Be Rock- (1980)/AC-DC- Let There Be Rock- (1980).mkv"
+  },
+  {
+    "name": "sanitise-ascii-only-accents",
+    "kind": "TV",
+    "naming": {
+      "media": {
+        "tmdb_id": 0,
+        "tvdb_id": 392573,
+        "imdb_id": ""
+      },
+      "title": "Shōgun",
+      "year": 2024,
+      "season": 1,
+      "episodes": [
+        4
+      ],
+      "episode_titles": [
+        "The Eightfold Fence"
+      ],
+      "quality": {
+        "resolution": "1080p",
+        "source": "WEB-DL"
+      }
+    },
+    "folder_template": "{series_title}/Season {season:02}",
+    "file_template": "{series_title} - S{season:02}E{episode:02} - {episode_title}",
+    "specials_folder": "Specials",
+    "sanitizer": {
+      "replacement": " -",
+      "ascii_only": true
+    },
+    "expected_relative_path": "Shogun/Season 01/Shogun - S01E04 - The Eightfold Fence.mkv"
+  },
+  {
+    "name": "sanitise-trailing-dot-and-quotes",
+    "kind": "TV",
+    "naming": {
+      "media": {
+        "tmdb_id": 0,
+        "tvdb_id": 263365,
+        "imdb_id": ""
+      },
+      "title": "Marvel's Agents of S.H.I.E.L.D.",
+      "year": 2013,
+      "season": 1,
+      "episodes": [
+        1
+      ],
+      "episode_titles": [
+        "Pilot \"Part 1\""
+      ],
+      "quality": {
+        "resolution": "1080p",
+        "source": "WEB-DL"
+      }
+    },
+    "folder_template": "{Series Title}/Season {season:00}",
+    "file_template": "{series_title} - {release_year} - S{season:02}E{episode:02} - {episode_title}",
+    "specials_folder": "Specials",
+    "sanitizer": {
+      "replacement": " -",
+      "ascii_only": false
+    },
+    "expected_relative_path": "Marvel's Agents of S.H.I.E.L.D/Season 01/Marvel's Agents of S.H.I.E.L.D. - 2013 - S01E01 - Pilot  -Part 1 -.mkv",
+    "note": "agent safety pass strips a trailing dot from each segment; the web preview will adopt it"
+  }
+]
