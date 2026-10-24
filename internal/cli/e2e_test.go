@@ -188,14 +188,14 @@ func TestRunPairsConnectsAndStopsOnRevoke(t *testing.T) {
 }
 
 func (g *e2eGateway) putSource(srv pb.AgentGatewayService_ConnectServer, seal *ecdh.PublicKey) error {
-	cfg := `{"v":1,"host":"news.newshosting.com","tls":true,"username":"u","password":"p","connections":20}`
+	cfg := `{"schema_version":1,"host":"news.newshosting.com","port":563,"tls":true,"insecure_skip_verify":false,"credentials":{"username":"u","password":"p"}}`
 
 	sealed, err := source.Seal(seal, []byte(cfg))
 	if err != nil {
 		return err
 	}
 
-	src := &pb.Source{Id: "src-nh", Kind: source.KindNNTP, DisplayName: "Newshosting", SealedConfig: sealed, SealedToKey: seal.Bytes(), Enabled: true}
+	src := &pb.Source{Id: "src-nh", Kind: source.KindUsenet, DisplayName: "Newshosting", SealedConfig: sealed, SealedToKey: seal.Bytes(), Enabled: true}
 	cmd := &pb.Command{Id: "cmd-src", Kind: &pb.Command_PutSource{PutSource: &pb.PutSource{Source: src}}}
 
 	if err := srv.Send(&pb.ControlMessage{Kind: &pb.ControlMessage_Command{Command: cmd}}); err != nil {

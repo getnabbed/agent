@@ -119,15 +119,19 @@ func sealJSON(t *testing.T, pub *ecdh.PublicKey, v any) []byte {
 	return sealed
 }
 
+// validConfig is shaped like the web app's seal.ts output, plus connections.
 func validConfig() map[string]any {
-	return map[string]any{"v": 1, "host": "news.newshosting.com", "port": 563, "tls": true, "username": "u", "password": "p@ss", "connections": 30}
+	return map[string]any{
+		"schema_version": 1, "host": "news.newshosting.com", "port": 563, "tls": true, "insecure_skip_verify": false,
+		"credentials": map[string]any{"username": "u", "password": "p@ss"}, "connections": 30,
+	}
 }
 
 func (f *fixture) source(t *testing.T, id string, cfg any) *pb.Source {
 	t.Helper()
 
 	return &pb.Source{
-		Id: id, Kind: KindNNTP, DisplayName: "Newshosting", Enabled: true,
+		Id: id, Kind: KindUsenet, DisplayName: "Newshosting", Enabled: true,
 		SealedConfig: sealJSON(t, f.key.PublicKey(), cfg),
 		SealedToKey:  f.key.PublicKey().Bytes(),
 	}
@@ -298,12 +302,19 @@ func TestRejections(t *testing.T) {
 		{"empty", func() *pb.Source { s := f.source(t, "a", validConfig()); s.SealedConfig = nil; return s }, ErrInvalid},
 		{"not json", func() *pb.Source { return f.source(t, "a", []byte("host=x")) }, ErrInvalid},
 		{"unknown field", func() *pb.Source { return f.source(t, "a", with("user", "u")) }, ErrInvalid},
-		{"version 2", func() *pb.Source { return f.source(t, "a", with("v", 2)) }, ErrInvalid},
+		{"schema version 2", func() *pb.Source { return f.source(t, "a", with("schema_version", 2)) }, ErrInvalid},
+		{"no schema version", func() *pb.Source { return f.source(t, "a", with("schema_version", nil)) }, ErrInvalid},
+		{"skip verify", func() *pb.Source { return f.source(t, "a", with("insecure_skip_verify", true)) }, ErrInvalid},
+		{"api key", func() *pb.Source { return f.source(t, "a", with("credentials", map[string]any{"api_key": "k"})) }, ErrInvalid},
+		{"nntp kind", func() *pb.Source { s := f.source(t, "a", validConfig()); s.Kind = "nntp"; return s }, ErrKindUnsupported},
 		{"plaintext", func() *pb.Source { return f.source(t, "a", with("tls", false)) }, ErrInvalid},
 		{"no host", func() *pb.Source { return f.source(t, "a", with("host", nil)) }, ErrInvalid},
 		{"host with path", func() *pb.Source { return f.source(t, "a", with("host", "news.example.com/x")) }, ErrInvalid},
-		{"password only", func() *pb.Source { return f.source(t, "a", with("username", nil)) }, ErrInvalid},
-		{"crlf in password", func() *pb.Source { return f.source(t, "a", with("password", "p\r\nQUIT")) }, ErrInvalid},
+		{"password only", func() *pb.Source { return f.source(t, "a", with("credentials", map[string]any{"password": "p@ss"})) }, ErrInvalid},
+		{"crlf in password", func() *pb.Source {
+			return f.source(t, "a", with("credentials", map[string]any{"username": "u", "password": "p@ss\r\nQUIT"}))
+		}, ErrInvalid},
+		{"flat username", func() *pb.Source { return f.source(t, "a", with("username", "u")) }, ErrInvalid},
 		{"too many connections", func() *pb.Source { return f.source(t, "a", with("connections", 101)) }, ErrInvalid},
 		{"bad port", func() *pb.Source { return f.source(t, "a", with("port", 70000)) }, ErrInvalid},
 		{"private ip", func() *pb.Source { return f.source(t, "a", with("host", "192.168.1.10")) }, ErrHostBlocked},
@@ -348,7 +359,7 @@ func TestSourceLimit(t *testing.T) {
 }
 
 func TestDefaults(t *testing.T) {
-	p, err := parseNNTP([]byte(`{"v":1,"host":"News.Example.COM.","tls":true}`))
+	p, err := parseUsenet([]byte(`{"schema_version":1,"host":"News.Example.COM.","tls":true,"base_path":"/ignored"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

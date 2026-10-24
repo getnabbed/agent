@@ -13,8 +13,8 @@ import (
 const (
 	vectorKey       = "4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f"
 	vectorPublic    = "5590e18b13045370235f1719ab8448c3c0a39a269bfc86ded297b1fa1bf4ac30"
-	vectorSealed    = "kgwYqpZHE7lPpSe7ZEoaS7BE3tONx2T6XP7hG8w7+mkerMB5p7ZDb1rlIjhIix0cfYl3mfyxE//R8k2FzD6o/Y1z5BTcZRlA7Yk32vxMPbXkUM/8MpDLHZxAL6AjckRJZpUZTNsih8ELntgOS/yGipzJw+Koml4Npd7FJJvpwuJfeAb/voB4Db4BDrdqNYRsjqLJc/VNR46Z/zw0PyKtWX056cz5D46ElZruKEaE"
-	vectorPlaintext = `{"v":1,"host":"news.newshosting.com","port":563,"tls":true,"username":"vector-user","password":"vector-pass","connections":30}`
+	vectorSealed    = "SfAUr+XZ1fE66NrgLVDZ3AEMKBnJQ0yMKO/On2zDe0gN7llSLXN4GS2D6c2Q8l5BffeCejMBcvOPJVvVbNm9myowRoWv4U1bbw/Yowdf/z68KVygqwhzR1Sii69QcfXxLzNTj6QDIqZ8sKNb6y699HCEoIIElD3aEhI9gl04MqUSexPYpyXaXq+1VBO4uerUeTZQksei5SRDIdrq2eGmTQ6KZaVkUQnh/Ktrw31wGL4podYpBi37s1oy8nNpyB49DFv43VMuKz7oLKM/QpWdAmYm2MYlz6M="
+	vectorPlaintext = `{"schema_version":1,"host":"news.newshosting.com","port":563,"tls":true,"insecure_skip_verify":false,"credentials":{"username":"vector-user","password":"vector-pass"}}`
 )
 
 func TestOpensLibsodiumSealedBox(t *testing.T) {
@@ -40,8 +40,8 @@ func TestOpensLibsodiumSealedBox(t *testing.T) {
 		t.Fatalf("got plaintext %q, want %q", plain, vectorPlaintext)
 	}
 
-	p, err := parseNNTP(plain)
-	if err != nil || p.Host != "news.newshosting.com" || p.Username != "vector-user" || p.Connections != 30 {
+	p, err := parseUsenet(plain)
+	if err != nil || p.Host != "news.newshosting.com" || p.Username != "vector-user" || p.Password != "vector-pass" || p.Connections != 8 {
 		t.Fatalf("got provider %+v, err %v", p, err)
 	}
 

@@ -26,8 +26,8 @@ import (
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
 
-// KindNNTP is a usenet provider account.
-const KindNNTP = "nntp"
+// KindUsenet is a usenet provider account, the web app's built-in kind.
+const KindUsenet = "usenet"
 
 const (
 	maxSources        = 32
@@ -191,8 +191,8 @@ func (m *Manager) open(s *pb.Source) (usenet.Provider, error) {
 		return usenet.Provider{}, fmt.Errorf("%w: source id must be 1-64 letters, digits, - or _", ErrInvalid)
 	case len(s.GetDisplayName()) > maxDisplayNameLen:
 		return usenet.Provider{}, fmt.Errorf("%w: display_name is longer than %d bytes", ErrInvalid, maxDisplayNameLen)
-	case s.GetKind() != KindNNTP:
-		return usenet.Provider{}, fmt.Errorf("%w: %q (this agent supports %q)", ErrKindUnsupported, truncate(s.GetKind(), 32), KindNNTP)
+	case s.GetKind() != KindUsenet:
+		return usenet.Provider{}, fmt.Errorf("%w: %q (this agent supports %q)", ErrKindUnsupported, truncate(s.GetKind(), 32), KindUsenet)
 	case len(s.GetSealedConfig()) == 0 || len(s.GetSealedConfig()) > maxSealedBytes:
 		return usenet.Provider{}, fmt.Errorf("%w: sealed_config must be 1-%d bytes", ErrInvalid, maxSealedBytes)
 	}
@@ -204,7 +204,7 @@ func (m *Manager) open(s *pb.Source) (usenet.Provider, error) {
 
 	defer clear(plain)
 
-	p, err := parseNNTP(plain)
+	p, err := parseUsenet(plain)
 	if err != nil {
 		return usenet.Provider{}, err
 	}

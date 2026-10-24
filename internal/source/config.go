@@ -12,24 +12,36 @@ import (
 	"github.com/getnabbed/agent/internal/netguard"
 )
 
-// NNTPConfig is the plaintext inside an nntp source's sealed_config,
-// version 1. Unknown fields are rejected, so a misspelt field fails at
-// PutSource instead of as an authentication error mid-download.
-type NNTPConfig struct {
-	V           int    `json:"v"`
-	Host        string `json:"host"`
-	Port        int    `json:"port,omitempty"`
-	TLS         bool   `json:"tls"`
-	Username    string `json:"username,omitempty"`
-	Password    string `json:"password,omitempty"`
-	Connections int    `json:"connections,omitempty"`
-	Backup      bool   `json:"backup,omitempty"`
+// UsenetConfig is the plaintext inside a usenet source's sealed_config, as
+// the web app seals it (nabbed-frontend seal.ts, schema version 1).
+// Unknown fields are rejected, so a misspelt field fails at PutSource
+// instead of as an authentication error mid-download.
+type UsenetConfig struct {
+	SchemaVersion      int          `json:"schema_version"`
+	Host               string       `json:"host"`
+	Port               int          `json:"port,omitempty"`
+	TLS                bool         `json:"tls"`
+	InsecureSkipVerify bool         `json:"insecure_skip_verify,omitempty"`
+	Credentials        *Credentials `json:"credentials,omitempty"`
+	// BasePath is used by HTTP download clients; usenet ignores it.
+	BasePath string `json:"base_path,omitempty"`
+	// Connections is the account's connection limit, an agent extension the
+	// web form does not send yet.
+	Connections int `json:"connections,omitempty"`
+}
+
+// Credentials holds a username and password, or an API key for HTTP
+// download clients.
+type Credentials struct {
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	APIKey   string `json:"api_key,omitempty"`
 }
 
 var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.?$`)
 
-func parseNNTP(plain []byte) (usenet.Provider, error) {
-	var c NNTPConfig
+func parseUsenet(plain []byte) (usenet.Provider, error) {
+	var c UsenetConfig
 
 	dec := json.NewDecoder(bytes.NewReader(plain))
 	dec.DisallowUnknownFields()
@@ -48,8 +60,8 @@ func parseNNTP(plain []byte) (usenet.Provider, error) {
 		return usenet.Provider{}, fmt.Errorf("%w: sealed config has data after the JSON object", ErrInvalid)
 	}
 
-	if c.V != 1 {
-		return usenet.Provider{}, fmt.Errorf("%w: sealed config version %d, this agent supports 1", ErrInvalid, c.V)
+	if c.SchemaVersion != 1 {
+		return usenet.Provider{}, fmt.Errorf("%w: sealed config schema_version %d, this agent supports 1", ErrInvalid, c.SchemaVersion)
 	}
 
 	host := strings.ToLower(strings.TrimSpace(c.Host))
@@ -59,7 +71,11 @@ func parseNNTP(plain []byte) (usenet.Provider, error) {
 	}
 
 	if !c.TLS {
-		return usenet.Provider{}, fmt.Errorf("%w: tls must be true; web-app sources must use nntps", ErrInvalid)
+		return usenet.Provider{}, fmt.Errorf("%w: tls must be on; usenet providers from the web app must use TLS", ErrInvalid)
+	}
+
+	if c.InsecureSkipVerify {
+		return usenet.Provider{}, fmt.Errorf("%w: insecure_skip_verify must be off: without certificate checks TLS does not protect the password", ErrInvalid)
 	}
 
 	port := c.Port
@@ -80,18 +96,26 @@ func parseNNTP(plain []byte) (usenet.Provider, error) {
 		return usenet.Provider{}, fmt.Errorf("%w: connections must be 1-100", ErrInvalid)
 	}
 
-	if (c.Username == "") != (c.Password == "") {
+	var user, pass string
+	if cr := c.Credentials; cr != nil {
+		if cr.APIKey != "" {
+			return usenet.Provider{}, fmt.Errorf("%w: usenet providers take a username and password, not an api_key", ErrInvalid)
+		}
+
+		user, pass = cr.Username, cr.Password
+	}
+
+	if (user == "") != (pass == "") {
 		return usenet.Provider{}, fmt.Errorf("%w: set both username and password, or neither", ErrInvalid)
 	}
 
-	if strings.ContainsAny(c.Username+c.Password, "\r\n") {
+	if strings.ContainsAny(user+pass, "\r\n") {
 		return usenet.Provider{}, fmt.Errorf("%w: username and password must not contain line breaks", ErrInvalid)
 	}
 
 	return usenet.Provider{
 		Host: strings.TrimSuffix(host, "."), Port: port, TLS: true,
-		Username: c.Username, Password: c.Password,
-		Connections: conns, Backup: c.Backup,
+		Username: user, Password: pass, Connections: conns,
 	}, nil
 }
 

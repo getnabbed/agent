@@ -104,12 +104,12 @@ func (s *Store) PruneCommands(ctx context.Context, before time.Time) (int64, err
 	return r.RowsAffected()
 }
 
-// oneofName returns the populated "kind" oneof field name of m, such as
-// "start_download", for readable rows and logs.
 // KindName returns the name of the message's set "kind" oneof field, such as
 // "put_source", or "" when none is set.
 func KindName(m proto.Message) string { return oneofName(m) }
 
+// oneofName returns the populated "kind" oneof field name of m, such as
+// "start_download", for readable rows and logs.
 func oneofName(m proto.Message) string {
 	r := m.ProtoReflect()
 
