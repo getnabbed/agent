@@ -40,7 +40,8 @@ var ErrNaming = fmt.Errorf("%w: cannot name the file", ErrInvalid)
 
 // tokens returns the values a library kind's templates may use.
 func tokens(kind pb.LibraryKind, n *pb.NamingContext) map[string]string {
-	t := map[string]string{"year": num(n.GetYear())}
+	// release_group is not in NamingContext yet; empty, it collapses away.
+	t := map[string]string{"year": num(n.GetYear()), "quality": quality(n.GetQuality()), "release_group": ""}
 
 	switch kind {
 	case pb.LibraryKind_LIBRARY_KIND_TV:
@@ -151,7 +152,11 @@ func RelPath(root *pb.LibraryRoot, n *pb.NamingContext, s *pb.PathSanitizer, ext
 			continue
 		}
 
-		seg := render(part, values, s)
+		seg := collapse(render(part, values, s))
+		if seg == "" {
+			continue // a folder made only of empty tokens is dropped
+		}
+
 		if root.GetKind() == pb.LibraryKind_LIBRARY_KIND_TV && n.GetSeason() == 0 && root.GetSpecialsFolder() != "" &&
 			tokenNamed(part, "season") {
 			seg = root.GetSpecialsFolder()
@@ -165,7 +170,7 @@ func RelPath(root *pb.LibraryRoot, n *pb.NamingContext, s *pb.PathSanitizer, ext
 		segments = append(segments, safe)
 	}
 
-	file, err := safeSegment(render(root.GetFileTemplate(), values, s), strings.ToLower(ext))
+	file, err := safeSegment(collapse(render(root.GetFileTemplate(), values, s)), strings.ToLower(ext))
 	if err != nil {
 		return "", err
 	}
@@ -223,4 +228,49 @@ func safeSegment(seg, ext string) (string, error) {
 	}
 
 	return seg + ext, nil
+}
+
+// quality renders {quality} as "<Source>-<Resolution>" with punctuation
+// removed from the source ("WEBDL-1080p"), or whichever part is known.
+func quality(q *pb.Quality) string {
+	src := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return r
+		}
+
+		return -1
+	}, q.GetSource())
+
+	switch res := q.GetResolution(); {
+	case src != "" && res != "":
+		return src + "-" + res
+	case src != "":
+		return src
+	default:
+		return res
+	}
+}
+
+var (
+	emptyPair = regexp.MustCompile(`\(\s*\)|\[\s*\]|\{\s*\}`)
+	spaces    = regexp.MustCompile(` {2,}`)
+)
+
+// collapse tidies a rendered segment whose tokens were empty, exactly as
+// the web preview does: empty (), [] and {} pairs are removed until none
+// remain, runs of spaces become one, and spaces and hyphens are stripped
+// from both ends. "Arrival ()" becomes "Arrival".
+func collapse(seg string) string {
+	for {
+		next := emptyPair.ReplaceAllString(seg, "")
+		if next == seg {
+			break
+		}
+
+		seg = next
+	}
+
+	seg = spaces.ReplaceAllString(seg, " ")
+
+	return strings.TrimFunc(seg, func(r rune) bool { return r == '-' || unicode.IsSpace(r) })
 }

@@ -77,10 +77,10 @@ func (f *fakeEngine) Download(ctx context.Context, job engine.Job, progress func
 
 type okImporter struct{ imported atomic.Int32 }
 
-func (o *okImporter) Import(context.Context, engine.Job, *engine.Result, *pb.Download) error {
+func (o *okImporter) Import(_ context.Context, _ engine.Job, _ *engine.Result, d *pb.Download) (*pb.ImportCompleted, error) {
 	o.imported.Add(1)
 
-	return nil
+	return &pb.ImportCompleted{DownloadId: d.GetId(), RootId: "root-1"}, nil
 }
 
 // memFetcher serves payloads from memory.
@@ -245,6 +245,28 @@ func TestHappyPathWalksEveryStage(t *testing.T) {
 
 	if h.imp.imported.Load() != 1 || h.tel.n.Load() == 0 {
 		t.Fatalf("imported=%d telemetry=%d", h.imp.imported.Load(), h.tel.n.Load())
+	}
+
+	// The importer's ImportCompleted is queued once, with the move to DONE.
+	_, events, _, err := h.st.PendingEvents(context.Background(), 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var completed, doneAt, completedAt int
+
+	for i, ev := range events {
+		if ic := ev.GetImportCompleted(); ic != nil && ic.GetDownloadId() == "d1" {
+			completed, completedAt = completed+1, i
+		}
+
+		if ev.GetDownloadUpdate().GetState() == Done {
+			doneAt = i
+		}
+	}
+
+	if completed != 1 || completedAt > doneAt {
+		t.Fatalf("got %d ImportCompleted events (at %d, DONE at %d), want one queued before DONE", completed, completedAt, doneAt)
 	}
 
 	got, _ := os.ReadFile(filepath.Join(h.m.workDir("d1"), "payload.torrent"))
@@ -439,7 +461,7 @@ func TestRecoversInterruptedDownload(t *testing.T) {
 }
 
 func TestDefaultImporterFailsRetryably(t *testing.T) {
-	err := UnimplementedImporter{}.Import(context.Background(), engine.Job{}, &engine.Result{}, nil)
+	_, err := UnimplementedImporter{}.Import(context.Background(), engine.Job{}, &engine.Result{}, nil)
 
 	var f *engine.Failure
 	if !errors.As(err, &f) || f.Class != pb.FailureClass_FAILURE_CLASS_IMPORT || !f.Retryable {

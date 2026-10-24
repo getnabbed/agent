@@ -18,6 +18,7 @@ import (
 	"github.com/getnabbed/agent/internal/config"
 	"github.com/getnabbed/agent/internal/credstore"
 	"github.com/getnabbed/agent/internal/identity"
+	"github.com/getnabbed/agent/internal/library"
 	"github.com/getnabbed/agent/internal/link"
 	"github.com/getnabbed/agent/internal/lock"
 	"github.com/getnabbed/agent/internal/source"
@@ -262,7 +263,13 @@ func runRun(ctx context.Context, e *env, args []string) int {
 
 	defer func() { _ = state.Close() }()
 
-	downloads, nntp, closeEngines, err := newDownloads(e, rf, state, api, hc, tokens)
+	lib, err := newLibrary(e, state)
+	if err != nil {
+		e.log.Error("library setup failed", "err", err)
+		return ExitError
+	}
+
+	downloads, nntp, closeEngines, err := newDownloads(e, rf, state, api, hc, tokens, &library.Importer{Library: lib, Log: e.log})
 	if err != nil {
 		e.log.Error("download setup failed", "err", err)
 		return ExitError
@@ -276,17 +283,11 @@ func runRun(ctx context.Context, e *env, args []string) int {
 		return ExitError
 	}
 
-	lib, err := newLibrary(e, state)
-	if err != nil {
-		e.log.Error("library setup failed", "err", err)
-		return ExitError
-	}
-
 	applier := command.New(command.Config{Store: state, Clock: clk, Downloads: downloads, Sources: sources, Library: lib, Log: e.log})
 	applier.Prune(ctx)
 
 	lc, err := link.New(link.Config{
-		Capabilities:         downloads.Capabilities,
+		Capabilities:         capabilities(downloads, lib),
 		Sources:              sources.Inventory,
 		GatewayURL:           creds.GatewayURL,
 		TransportCredentials: credentials.NewTLS(tlsCfg),

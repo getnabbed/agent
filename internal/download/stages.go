@@ -15,10 +15,11 @@ type Assembler interface {
 	Assemble(ctx context.Context, job engine.Job, res *engine.Result) (*engine.Result, error)
 }
 
-// Importer renames completed files into a library root and reports
-// ImportCompleted.
+// Importer places completed files into a library root. The manager queues
+// the ImportCompleted it returns in the same transaction that marks the
+// download done. It must be safe to run again after a crash.
 type Importer interface {
-	Import(ctx context.Context, job engine.Job, res *engine.Result, d *pb.Download) error
+	Import(ctx context.Context, job engine.Job, res *engine.Result, d *pb.Download) (*pb.ImportCompleted, error)
 }
 
 // PassthroughAssembler accepts complete engine output as-is. It does no PAR2
@@ -42,7 +43,7 @@ func (PassthroughAssembler) Assemble(_ context.Context, _ engine.Job, res *engin
 type UnimplementedImporter struct{}
 
 // Import implements Importer.
-func (UnimplementedImporter) Import(context.Context, engine.Job, *engine.Result, *pb.Download) error {
-	return engine.Fail(pb.FailureClass_FAILURE_CLASS_IMPORT, true,
+func (UnimplementedImporter) Import(context.Context, engine.Job, *engine.Result, *pb.Download) (*pb.ImportCompleted, error) {
+	return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_IMPORT, true,
 		"import is not implemented in this agent build; files remain in the download directory")
 }

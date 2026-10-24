@@ -321,7 +321,7 @@ func (m *Manager) run(ctx context.Context, id string) {
 
 		log.Debug("stage", "state", r.State)
 
-		res, err := m.safeStage(ctx, r)
+		res, ev, err := m.safeStage(ctx, r)
 		if err != nil {
 			if ctx.Err() != nil {
 				return // paused, cancelled or shutting down: state stays as the command left it
@@ -349,6 +349,14 @@ func (m *Manager) run(ctx context.Context, id string) {
 				}
 			}
 
+			// A stage's own event (ImportCompleted) commits with the move to
+			// the next state, so the cloud never sees one without the other.
+			if ev != nil {
+				if _, err := tx.Enqueue(ctx, ev); err != nil {
+					return err
+				}
+			}
+
 			var err error
 			moved, err = transition(ctx, tx, id, r.State, to, nil)
 
@@ -368,35 +376,44 @@ func (m *Manager) update(ctx context.Context, fn func(*store.Tx) error) {
 	}
 }
 
-// stage does the work of r.State. A non-nil result is stored with the
-// transition.
-func (m *Manager) stage(ctx context.Context, r *row) (*engine.Result, error) {
+// stage does the work of r.State. A non-nil result is stored, and a non-nil
+// event queued, with the transition.
+func (m *Manager) stage(ctx context.Context, r *row) (*engine.Result, *pb.Event, error) {
 	job := m.job(r)
 
 	switch r.State {
 	case Queued:
-		return nil, os.MkdirAll(job.Dir, 0o750)
+		return nil, nil, os.MkdirAll(job.Dir, 0o750)
 	case Fetching:
 		ref := r.Spec.GetRelease().GetPayloadRef()
 		if ref == nil {
-			return nil, nil // magnet: nothing to fetch
+			return nil, nil, nil // magnet: nothing to fetch
 		}
 
-		return nil, fetchPayload(ctx, m.cfg.Fetcher, ref, job.Dir, payloadName(ref.GetKind()))
+		return nil, nil, fetchPayload(ctx, m.cfg.Fetcher, ref, job.Dir, payloadName(ref.GetKind()))
 	case Downloading:
 		e, ok := m.engines[r.Protocol]
 		if !ok || !e.Available() {
-			return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, true, "no %s engine available", protocolName(r.Protocol))
+			return nil, nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, true, "no %s engine available", protocolName(r.Protocol))
 		}
 
-		return e.Download(ctx, job, func(p engine.Progress) { m.progress(r.ID, p) })
+		res, err := e.Download(ctx, job, func(p engine.Progress) { m.progress(r.ID, p) })
+
+		return res, nil, err
 	case Assembling:
-		return m.cfg.Assembler.Assemble(ctx, job, resultOrEmpty(r))
+		res, err := m.cfg.Assembler.Assemble(ctx, job, resultOrEmpty(r))
+
+		return res, nil, err
 	case Importing:
-		return nil, m.cfg.Importer.Import(ctx, job, resultOrEmpty(r), r.Spec)
+		done, err := m.cfg.Importer.Import(ctx, job, resultOrEmpty(r), r.Spec)
+		if err != nil || done == nil {
+			return nil, nil, err
+		}
+
+		return nil, &pb.Event{Kind: &pb.Event_ImportCompleted{ImportCompleted: done}}, nil
 	}
 
-	return nil, fmt.Errorf("no stage for state %s", r.State)
+	return nil, nil, fmt.Errorf("no stage for state %s", r.State)
 }
 
 func resultOrEmpty(r *row) *engine.Result {
@@ -457,13 +474,13 @@ func defaultClass(s State) pb.FailureClass {
 // this download, so one hostile input cannot take down the agent. Panics in
 // goroutines an engine starts itself cannot be caught here; engines must
 // validate input before handing it to libraries.
-func (m *Manager) safeStage(ctx context.Context, r *row) (res *engine.Result, err error) {
+func (m *Manager) safeStage(ctx context.Context, r *row) (res *engine.Result, ev *pb.Event, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			m.log.Error("panic in download stage", "download_id", r.ID, "state", r.State,
 				"panic", fmt.Sprint(p), "stack", string(debug.Stack()))
 
-			res, err = nil, engine.Fail(defaultClass(r.State), false, "internal error while %s", stateName(r.State))
+			res, ev, err = nil, nil, engine.Fail(defaultClass(r.State), false, "internal error while %s", stateName(r.State))
 		}
 	}()
 

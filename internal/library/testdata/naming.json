@@ -175,7 +175,7 @@
       "replacement": " -",
       "ascii_only": false
     },
-    "expected_relative_path": "Marvel's Agents of S.H.I.E.L.D/Season 01/Marvel's Agents of S.H.I.E.L.D. - 2013 - S01E01 - Pilot  -Part 1 -.mkv",
-    "note": "agent safety pass strips a trailing dot from each segment; the web preview will adopt it"
+    "expected_relative_path": "Marvel's Agents of S.H.I.E.L.D/Season 01/Marvel's Agents of S.H.I.E.L.D. - 2013 - S01E01 - Pilot -Part 1.mkv",
+    "note": "agent strips a trailing dot per segment and collapses double spaces and a dangling \" -\" (naming decisions of 2026-10-24); naming.ts adopts both"
   }
 ]

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"github.com/getnabbed/agent/internal/config"
+	"github.com/getnabbed/agent/internal/download"
 	"github.com/getnabbed/agent/internal/library"
 	"github.com/getnabbed/agent/internal/store"
 )
@@ -35,4 +36,21 @@ func newLibrary(e *env, st *store.Store) (*library.Manager, error) {
 	}
 
 	return library.New(st, policy, e.log), nil
+}
+
+// CapLibraryImport says the agent imports into library roots. It is only
+// advertised once the host owner allowed a folder: the cloud re-sends the
+// library configuration when an agent gains it, so allowing the first
+// folder and restarting brings the user's roots in.
+const CapLibraryImport = "library.import"
+
+func capabilities(downloads *download.Manager, lib *library.Manager) func() []string {
+	return func() []string {
+		caps := downloads.Capabilities()
+		if len(lib.Policy().Allowed()) > 0 {
+			caps = append(caps, CapLibraryImport)
+		}
+
+		return caps
+	}
 }

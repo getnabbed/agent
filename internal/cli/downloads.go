@@ -39,7 +39,7 @@ func (f *runFlags) register(fs *flag.FlagSet, cfg *config.Config) {
 
 // newDownloads builds the engines and the download manager. The returned
 // func closes the engines.
-func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc *http.Client, tokens *auth.TokenSource) (*download.Manager, *usenet.Engine, func(), error) {
+func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc *http.Client, tokens *auth.TokenSource, imp download.Importer) (*download.Manager, *usenet.Engine, func(), error) {
 	nntpURLs := f.nntp
 	if nntpURLs == "" {
 		nntpURLs = string(e.cfg.Usenet.Provider)
@@ -71,6 +71,7 @@ func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc 
 		// The usenet engine fetches the PAR2 volumes it deferred when repair
 		// needs them.
 		Assembler: &postproc.Assembler{Log: e.log, Fetcher: nntp},
+		Importer:  imp,
 		Log:       e.log,
 	})
 	if err != nil {
