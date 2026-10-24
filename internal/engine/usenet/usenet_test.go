@@ -200,7 +200,11 @@ func TestDownloadAssemblesFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_ = last
+	// The download takes less than the progress interval; the final report
+	// still says it reached the end.
+	if last.Total == 0 || last.Bytes != last.Total {
+		t.Fatalf("got last progress %+v, want a final report with every byte", last)
+	}
 
 	if res.MissingArticles != 0 || len(res.Deferred) != 1 || res.Deferred[0] != "m.vol00+01.par2" {
 		t.Fatalf("result = %+v", res)

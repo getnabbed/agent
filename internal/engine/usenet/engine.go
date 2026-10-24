@@ -730,11 +730,20 @@ func (d *download) background(stop <-chan struct{}, total int64, progress func(e
 	ct := time.NewTicker(checkpointInterval)
 	defer ct.Stop()
 
-	last, lastAt := d.doneBytes.Load(), time.Now()
+	start, startAt := d.doneBytes.Load(), time.Now()
+	last, lastAt := start, startAt
 
 	for {
 		select {
 		case <-stop:
+			// A final report, so a download faster than the interval still
+			// reaches its end; the speed is this run's average.
+			if progress != nil {
+				cur := d.doneBytes.Load()
+				speed := int64(float64(cur-start) / max(time.Since(startAt).Seconds(), 0.001))
+				progress(engine.Progress{Bytes: cur, Total: total, SpeedBps: speed})
+			}
+
 			return
 		case <-ct.C:
 			if err := d.flush(); err != nil {
