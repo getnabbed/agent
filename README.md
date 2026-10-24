@@ -63,10 +63,36 @@ redacted.
 | `torrent.port` | `NABBED_TORRENT_PORT` | `--torrent-port` | `0` (random); `6881` in Docker |
 | `torrent.allow_lan` | `NABBED_TORRENT_ALLOW_LAN` | `--torrent-allow-lan` | `false` |
 | `usenet.provider` | `NABBED_NNTP` | `--nntp` | none (temporary, see below) |
+| `library.allowed_roots` | `NABBED_LIBRARY_ROOTS` | | none: no library folders allowed (see below) |
+| `library.file_mode` | `NABBED_LIBRARY_FILE_MODE` | | `0644` |
+| `library.dir_mode` | `NABBED_LIBRARY_DIR_MODE` | | `0755` |
 
 Every environment variable also accepts a `_FILE` variant that names a file
 holding the value, for Docker and Kubernetes secrets:
 `NABBED_NNTP_FILE=/run/secrets/nntp`.
+
+### Library folders
+
+The web app chooses where imported files go, but only inside folders you
+allow on this machine. By default none are allowed, and the web app shows
+why each library folder was refused. Allow the parents of your libraries:
+
+```yaml
+library:
+  allowed_roots:
+    - /media/movies
+    - /media/tv
+```
+
+Or set `NABBED_LIBRARY_ROOTS=/media/movies:/media/tv` (`;`-separated on
+Windows). Symlinks are resolved, so a link cannot lead outside. In Docker,
+mount your media and allow the mount point, for example
+`-v /srv/media:/media -e NABBED_LIBRARY_ROOTS=/media`.
+
+Imported files are created `0644` and folders `0755`, so a media server
+running as another user can read them. Tighten them with `library.file_mode`
+and `library.dir_mode` if your media server shares the agent's user or
+group.
 
 ### Config file
 

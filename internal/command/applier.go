@@ -10,6 +10,7 @@ import (
 
 	"github.com/getnabbed/agent/internal/clock"
 	"github.com/getnabbed/agent/internal/download"
+	"github.com/getnabbed/agent/internal/library"
 	"github.com/getnabbed/agent/internal/store"
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
@@ -36,6 +37,15 @@ type Sources interface {
 	Test(ctx context.Context, id string) error
 }
 
+// Library stores library roots and the import policy. *library.Manager
+// implements it.
+type Library interface {
+	Put(ctx context.Context, tx *store.Tx, r *pb.LibraryRoot) error
+	Remove(ctx context.Context, tx *store.Tx, id string) error
+	SetImportPolicy(ctx context.Context, tx *store.Tx, p *pb.SetImportPolicy) error
+	Policy() *library.Policy
+}
+
 // Config configures an Applier.
 type Config struct {
 	Store *store.Store
@@ -48,6 +58,9 @@ type Config struct {
 	// Sources is optional; without it source commands are rejected as not
 	// implemented.
 	Sources Sources
+	// Library is optional; without it library commands are rejected as not
+	// implemented.
+	Library Library
 	Log     *slog.Logger
 }
 
@@ -57,6 +70,7 @@ type Applier struct {
 	clock     *clock.Clock
 	downloads Downloads
 	sources   Sources
+	library   Library
 	log       *slog.Logger
 }
 
@@ -70,7 +84,7 @@ func New(cfg Config) *Applier {
 		cfg.Log = slog.Default()
 	}
 
-	return &Applier{store: cfg.Store, clock: cfg.Clock, downloads: cfg.Downloads, sources: cfg.Sources, log: cfg.Log.With("component", "command")}
+	return &Applier{store: cfg.Store, clock: cfg.Clock, downloads: cfg.Downloads, sources: cfg.Sources, library: cfg.Library, log: cfg.Log.With("component", "command")}
 }
 
 // HandleCommand implements link.Handler. The state change and the recorded
@@ -122,6 +136,8 @@ func (a *Applier) HandleQuery(ctx context.Context, q *pb.Query) *pb.QueryResult 
 	switch k := q.GetKind().(type) {
 	case *pb.Query_TestSource:
 		return a.testSource(ctx, q.GetId(), k.TestSource)
+	case *pb.Query_BrowseFilesystem:
+		return a.browseFilesystem(q.GetId(), k.BrowseFilesystem)
 	default:
 		return &pb.QueryResult{QueryId: q.GetId(), Error: "unsupported"}
 	}

@@ -276,7 +276,13 @@ func runRun(ctx context.Context, e *env, args []string) int {
 		return ExitError
 	}
 
-	applier := command.New(command.Config{Store: state, Clock: clk, Downloads: downloads, Sources: sources, Log: e.log})
+	lib, err := newLibrary(e, state)
+	if err != nil {
+		e.log.Error("library setup failed", "err", err)
+		return ExitError
+	}
+
+	applier := command.New(command.Config{Store: state, Clock: clk, Downloads: downloads, Sources: sources, Library: lib, Log: e.log})
 	applier.Prune(ctx)
 
 	lc, err := link.New(link.Config{

@@ -35,6 +35,16 @@ torrent:
   # Off by default: a hostile torrent must not be able to probe your LAN.
   allow_lan: false
 
+# Folders the web app may import into. None by default, so imports are
+# refused until you allow the parents of your libraries. Symlinks are
+# resolved, so a link cannot lead outside.
+# library:
+#   allowed_roots:
+#     - /media/movies
+#     - /media/tv
+#   file_mode: "0644"   # readable by a media server running as another user
+#   dir_mode: "0755"
+
 # usenet:
 #   # TEMPORARY until providers are configured in the web app and sealed to
 #   # this agent. Prefer NABBED_NNTP_FILE pointing at a secret over putting

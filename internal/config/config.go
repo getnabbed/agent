@@ -64,6 +64,18 @@ type Config struct {
 		// Provider is temporary until sources are sealed to the agent.
 		Provider Secret `yaml:"provider"`
 	} `yaml:"usenet"`
+
+	Library struct {
+		// AllowedRoots are the only folders under which the control plane may
+		// place library roots. Empty, the default, allows none: import stays
+		// off until the host owner opts in.
+		AllowedRoots []string `yaml:"allowed_roots"`
+		// FileMode and DirMode are the permissions of imported files and the
+		// folders created for them, in octal. The defaults let a media
+		// server running as another user read them.
+		FileMode string `yaml:"file_mode"`
+		DirMode  string `yaml:"dir_mode"`
+	} `yaml:"library"`
 }
 
 // Secret is a string that never prints.
@@ -90,6 +102,8 @@ func Default() *Config {
 	c.Log.Level = "info"
 	c.Log.Format = "auto"
 	c.Downloads.MaxConcurrent = 3
+	c.Library.FileMode = "0644"
+	c.Library.DirMode = "0755"
 
 	return c
 }
@@ -133,6 +147,12 @@ func Load(path string, getenv func(string) string) (*Config, Source, error) {
 
 	if err := c.applyEnv(getenv); err != nil {
 		return nil, src, err
+	}
+
+	for _, m := range [][2]string{{"library.file_mode", c.Library.FileMode}, {"library.dir_mode", c.Library.DirMode}} {
+		if _, err := Mode(m[0], m[1]); err != nil {
+			return nil, src, err
+		}
 	}
 
 	return c, src, nil
@@ -212,6 +232,9 @@ var Env = []envVar{
 	{"NABBED_TORRENT_PORT", num("NABBED_TORRENT_PORT", func(c *Config) *int { return &c.Torrent.Port })},
 	{"NABBED_TORRENT_ALLOW_LAN", boolean("NABBED_TORRENT_ALLOW_LAN", func(c *Config) *bool { return &c.Torrent.AllowLAN })},
 	{"NABBED_NNTP", func(c *Config, v string) error { c.Usenet.Provider = Secret(v); return nil }},
+	{"NABBED_LIBRARY_ROOTS", func(c *Config, v string) error { c.Library.AllowedRoots = filepath.SplitList(v); return nil }},
+	{"NABBED_LIBRARY_FILE_MODE", str(func(c *Config) *string { return &c.Library.FileMode })},
+	{"NABBED_LIBRARY_DIR_MODE", str(func(c *Config) *string { return &c.Library.DirMode })},
 }
 
 // Name returns the variable's name.
@@ -302,4 +325,14 @@ func (c *Config) Redacted() string {
 	}
 
 	return b.String()
+}
+
+// Mode parses an octal permission setting such as "0644".
+func Mode(name, v string) (os.FileMode, error) {
+	n, err := strconv.ParseUint(strings.TrimSpace(v), 8, 32)
+	if err != nil || n > 0o777 {
+		return 0, fmt.Errorf("%s: %q is not an octal permission like 0644", name, v)
+	}
+
+	return os.FileMode(n), nil
 }
