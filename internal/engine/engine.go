@@ -26,6 +26,10 @@ type Job struct {
 	Magnet string
 	// SourceID selects the provider for engines that need one.
 	SourceID string
+	// Title is the release title from the control plane. It is untrusted
+	// and only used, sanitised, to name files whose own names are
+	// obfuscated.
+	Title string
 }
 
 // Progress is reported by engines while downloading, at most about once a

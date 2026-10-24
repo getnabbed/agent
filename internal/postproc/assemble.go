@@ -105,7 +105,7 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 			return nil, err
 		}
 
-		return a.unpack(ctx, root, files, par2Files, log)
+		return a.unpack(ctx, root, job.Title, files, par2Files, log)
 	}
 
 	p, set, err := readSet(root, index)
@@ -116,7 +116,7 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 			return nil, err
 		}
 
-		return a.unpack(ctx, root, files, par2Files, log)
+		return a.unpack(ctx, root, job.Title, files, par2Files, log)
 	}
 
 	dir := path.Dir(index[0])
@@ -155,7 +155,7 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 
 	if rep.Complete() {
 		log.Info("par2 verification passed", "files", len(rep.Files), "renamed", len(renamed))
-		return a.unpack(ctx, root, current, par2Files, log)
+		return a.unpack(ctx, root, job.Title, current, par2Files, log)
 	}
 
 	// Repair works on the files where they are now.
@@ -187,7 +187,7 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 		}
 	}
 
-	return a.unpack(ctx, root, files, par2Files, log)
+	return a.unpack(ctx, root, job.Title, files, par2Files, log)
 }
 
 // withoutPar2 decides a release that has no usable PAR2 index: it can
@@ -209,6 +209,13 @@ func (a *Assembler) restoreNames(root *os.Root, rep *par2.Report, targets map[*p
 	for _, r := range rep.Files {
 		to := targets[r.File]
 		if r.Found == "" || r.Found == to {
+			continue
+		}
+
+		// Indexers often post readable names for a set whose PAR2 was made
+		// from obfuscated files. Only trade an obfuscated name for a better one.
+		if !looksObfuscated(r.Found) || looksObfuscated(to) {
+			log.Debug("keeping downloaded file name", "file", r.Found, "par2_name", to)
 			continue
 		}
 

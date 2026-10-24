@@ -28,7 +28,13 @@ out the fastest usenet libraries. Each stage was checked in October 2026.
    data; recovery volumes are deferred. Each protected file is matched by
    size and the MD5 of its first 16 KiB, so obfuscated names are found and
    renamed to the recovery set's names (sanitised like NZB names, never
-   over an existing file). With no missing articles, that match is enough:
+   over an existing file). A file is renamed only when its own name looks
+   obfuscated (no extension, a long hex string, or a long run of letters
+   and digits with no separators) and the PAR2 name does not: indexers often
+   post readable NZB names for sets whose PAR2 was made from obfuscated
+   files. After extraction, if the largest file's name still looks
+   obfuscated, it and files sharing its stem take the release title
+   (sanitised) with their own extensions. With no missing articles, that match is enough:
    every byte already passed a yEnc CRC or torrent piece hash. Otherwise
    each file is hashed per slice to find the slices repair must rebuild.
    An obfuscated file whose first 16 KiB is damaged is found by its exact

@@ -408,9 +408,8 @@ func resultOrEmpty(r *row) *engine.Result {
 }
 
 func (m *Manager) job(r *row) engine.Job {
-	j := engine.Job{ID: r.ID, Dir: m.workDir(r.ID), SourceID: r.SourceID}
-
 	rel := r.Spec.GetRelease()
+	j := engine.Job{ID: r.ID, Dir: m.workDir(r.ID), SourceID: r.SourceID, Title: rel.GetTitle()}
 	if ref := rel.GetPayloadRef(); ref != nil {
 		j.PayloadPath = filepath.Join(j.Dir, payloadName(ref.GetKind()))
 	} else {
