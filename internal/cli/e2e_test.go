@@ -198,7 +198,7 @@ func TestRunPairsConnectsAndStopsOnRevoke(t *testing.T) {
 }
 
 func (g *e2eGateway) putSource(srv pb.AgentGatewayService_ConnectServer, seal *ecdh.PublicKey) error {
-	cfg := `{"schema_version":1,"host":"news.newshosting.com","port":563,"tls":true,"insecure_skip_verify":false,"credentials":{"username":"u","password":"p"}}`
+	cfg := `{"schema_version":1,"host":"news.provider.invalid","port":563,"tls":true,"insecure_skip_verify":false,"credentials":{"username":"u","password":"p"}}`
 
 	sealed, err := source.Seal(seal, []byte(cfg))
 	if err != nil {

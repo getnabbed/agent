@@ -162,9 +162,45 @@ Open items for the cloud:
 6. **Proto additions (agreed):** `int32 priority` and a plain `role`
    (`PRIMARY`, `BACKUP`) on `Source`.
 
-Not yet in the agent: `TestSource` (a "test connection" button gets
-`UNSUPPORTED`) and `SourceHealth` events (the cloud's `record_health` is
-ready for them).
+### Health: `SourceHealth` events and `TestSource`
+
+The agent reports each source's health so the web app can show it.
+
+- **When a source is applied** (first `PutSource`, a changed one, or at
+  startup), the agent opens one connection: TCP, TLS, greeting and login.
+  The connection is then kept for downloads. If downloads already hold
+  working connections, they count as the check, so the account limit is
+  never exceeded.
+- **During downloads** the state follows real use. A good connection makes
+  it healthy. A login failure or blocked address makes it unhealthy at
+  once. Five failed connection attempts in a row make it unhealthy, and
+  one success recovers it.
+- **Only changes are sent:** `SourceHealth{source_id, healthy, detail}`
+  goes through the outbox, so it survives a reconnect. A provider failing
+  over and over sends one event. After a restart, each source's first
+  check is sent again. Providers configured on the agent itself are
+  never reported.
+- **`detail`** says why in words, at most 256 bytes and never containing
+  credentials:
+  - "the provider rejected the username or password (code 481)"
+  - "host \"x\" not found"
+  - "connection refused: check the host and port"
+  - "timed out connecting: check the host, port and TLS setting"
+  - "the TLS certificate is not valid: …"
+  - "the provider refused the connection: too many connections are open
+    for this account"
+
+  A healthy report has an empty `detail`.
+
+`TestSource{source_id}` (a query, for a "test connection" button) runs the
+same check at once, within 30 seconds:
+
+- `QueryResult{ok: true}` means it connected and logged in.
+- `ok: false` puts the reason in `error`: the details above, or "unknown
+  source", "source is disabled", or "source configuration cannot be
+  unsealed".
+
+A test that changes the state also sends a `SourceHealth` event.
 
 Anyone holding the public key can seal, the cloud included, so the agent
 treats sources as untrusted: public hosts and verified TLS only. A usenet

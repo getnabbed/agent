@@ -55,6 +55,9 @@ var (
 type Engine interface {
 	SetProvider(id string, p usenet.Provider)
 	RemoveProvider(id string)
+	SetHealthHook(fn func(id string))
+	Health(id string) (usenet.Health, bool)
+	Check(ctx context.Context, id string) error
 }
 
 // Config configures a Manager.
@@ -80,20 +83,36 @@ type Manager struct {
 	// unusable holds stored sources that no longer open, reported in Hello
 	// so the control plane can ask for them to be sealed again.
 	unusable map[string]bool
+	// Health reporting, see health.go.
+	wake     chan struct{}
+	changed  map[string]bool
+	toCheck  map[string]bool
+	reported map[string]usenet.Health
 }
 
-// New returns a Manager. Call Load before applying commands.
+// New returns a Manager. Call Load before applying commands, and Run to
+// report source health.
 func New(cfg Config) *Manager {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
 
-	return &Manager{
+	m := &Manager{
 		store: cfg.Store, key: cfg.Key, engine: cfg.Engine,
 		log:      cfg.Log.With("component", "source"),
 		applied:  map[string][sha256.Size]byte{},
 		unusable: map[string]bool{},
+		wake:     make(chan struct{}, 1),
+		changed:  map[string]bool{},
+		toCheck:  map[string]bool{},
+		reported: map[string]usenet.Health{},
 	}
+
+	if m.engine != nil {
+		m.engine.SetHealthHook(m.onHealth)
+	}
+
+	return m
 }
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -149,6 +168,7 @@ func (m *Manager) Remove(ctx context.Context, tx *store.Tx, id string) error {
 		defer m.mu.Unlock()
 
 		delete(m.unusable, id)
+		delete(m.reported, id)
 
 		if _, ok := m.applied[id]; ok {
 			m.engine.RemoveProvider(id)
@@ -279,6 +299,7 @@ func (m *Manager) apply(id, name string, enabled bool, p usenet.Provider, fp [sh
 		if ok {
 			m.engine.RemoveProvider(id)
 			delete(m.applied, id)
+			delete(m.reported, id)
 			m.log.Info("usenet source disabled", "source_id", id, "name", name)
 		}
 	case ok && have == fp:
@@ -286,6 +307,7 @@ func (m *Manager) apply(id, name string, enabled bool, p usenet.Provider, fp [sh
 	default:
 		m.engine.SetProvider(id, p)
 		m.applied[id] = fp
+		m.queueCheck(id)
 		m.log.Info("usenet source configured", "source_id", id, "name", name,
 			"host", p.Host, "connections", p.Connections, "backup", p.Backup)
 	}

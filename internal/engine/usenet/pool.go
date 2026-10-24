@@ -50,6 +50,10 @@ type pool struct {
 	retryAt  time.Time // no dials before this
 	fatalErr error     // sticky: bad credentials or a blocked address do not fix themselves
 	learned  bool      // limit was lowered from the configured value
+	health   Health
+	// onChange is called, without mu held, after health changes. It must not
+	// block.
+	onChange func()
 	closed   bool
 	changed  chan struct{}
 }
@@ -157,12 +161,22 @@ func (pl *pool) tryGet() (*conn, <-chan struct{}, error) {
 func (pl *pool) dialSlot(ctx context.Context) (*conn, error) {
 	c, err := pl.dial(ctx)
 
+	// Registered first so it runs after the unlock below.
+	changed := false
+	defer func() {
+		if changed {
+			pl.notify()
+		}
+	}()
+
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
 	defer pl.signal()
 
 	if err == nil {
 		pl.failures = 0
+		changed = pl.setHealth(Health{State: HealthOK})
+
 		return c, nil
 	}
 
@@ -173,6 +187,7 @@ func (pl *pool) dialSlot(ctx context.Context) (*conn, error) {
 		return nil, ctx.Err()
 	case errors.Is(err, ErrAuth), errors.Is(err, netguard.ErrBlocked):
 		pl.fatalErr = err
+		changed = pl.setHealth(Health{State: HealthFailing, Detail: Describe(err)})
 		pl.log.Warn("usenet provider unusable", "err", err)
 
 		return nil, err
@@ -195,6 +210,7 @@ func (pl *pool) dialSlot(ctx context.Context) (*conn, error) {
 
 	if pl.failures >= maxDialFailures {
 		pl.retryAt = time.Now().Add(downCooldown)
+		changed = pl.setHealth(Health{State: HealthFailing, Detail: Describe(err)})
 		pl.log.Warn("usenet provider unreachable", "err", err)
 
 		return nil, fmt.Errorf("%w: %s: %w", ErrProviderDown, pl.p.Host, err)

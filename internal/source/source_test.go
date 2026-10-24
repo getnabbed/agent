@@ -22,10 +22,67 @@ import (
 var quiet = slog.New(slog.DiscardHandler)
 
 // fakeEngine records provider changes. Tests look up the source "src-1".
+// Check sets the provider's health to checkErr's outcome.
 type fakeEngine struct {
 	mu        sync.Mutex
 	providers map[string]usenet.Provider
 	sets      int
+	health    map[string]usenet.Health
+	checks    []string
+	checkErr  error
+	hook      func(string)
+}
+
+func (f *fakeEngine) SetHealthHook(fn func(string)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.hook = fn
+}
+
+func (f *fakeEngine) Health(id string) (usenet.Health, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if _, ok := f.providers[id]; !ok {
+		return usenet.Health{}, false
+	}
+
+	return f.health[id], true
+}
+
+func (f *fakeEngine) Check(_ context.Context, id string) error {
+	f.mu.Lock()
+
+	f.checks = append(f.checks, id)
+	err := f.checkErr
+
+	h := usenet.Health{State: usenet.HealthOK}
+	if err != nil {
+		h = usenet.Health{State: usenet.HealthFailing, Detail: usenet.Describe(err)}
+	}
+
+	if f.health == nil {
+		f.health = map[string]usenet.Health{}
+	}
+
+	changed := f.health[id] != h
+	f.health[id] = h
+	hook := f.hook
+	f.mu.Unlock()
+
+	if changed && hook != nil {
+		hook(id)
+	}
+
+	return err
+}
+
+func (f *fakeEngine) setCheckErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.checkErr = err
 }
 
 func (f *fakeEngine) SetProvider(id string, p usenet.Provider) {

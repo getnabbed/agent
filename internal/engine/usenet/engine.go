@@ -35,6 +35,7 @@ type Engine struct {
 	timeout time.Duration
 	backoff func(failures int) time.Duration
 	log     *slog.Logger
+	hook    atomic.Pointer[func(id string)]
 
 	mu        sync.Mutex
 	providers []*registered // priority order
@@ -61,12 +62,57 @@ func New(log *slog.Logger) *Engine {
 	return e
 }
 
+// SetHealthHook sets fn to be called with a provider's id whenever its
+// health changes; read it with Health. fn must not block.
+func (e *Engine) SetHealthHook(fn func(id string)) {
+	e.hook.Store(&fn)
+}
+
+// Health returns provider id's health and whether the provider exists.
+func (e *Engine) Health(id string) (Health, bool) {
+	pl := e.pool(id)
+	if pl == nil {
+		return Health{}, false
+	}
+
+	return pl.currentHealth(), true
+}
+
+// Check connects to provider id now and returns why it cannot be used, or
+// nil. Working open connections count as a pass.
+func (e *Engine) Check(ctx context.Context, id string) error {
+	pl := e.pool(id)
+	if pl == nil {
+		return ErrNoProvider
+	}
+
+	return pl.check(ctx)
+}
+
+func (e *Engine) pool(id string) *pool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	for _, r := range e.providers {
+		if r.id == id {
+			return r.pool
+		}
+	}
+
+	return nil
+}
+
 // SetProvider adds or replaces provider id. Providers are tried in the
 // order they were first added. Downloads in progress keep the pool they
 // started with until they finish.
 func (e *Engine) SetProvider(id string, p Provider) {
 	pl := newPool(p, e.timeout, e.log)
 	pl.backoff = e.backoff
+	pl.onChange = func() {
+		if fn := e.hook.Load(); fn != nil {
+			(*fn)(id)
+		}
+	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()

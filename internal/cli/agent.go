@@ -317,6 +317,13 @@ func runRun(ctx context.Context, e *env, args []string) int {
 		_ = downloads.Run(runCtx)
 	}()
 
+	// Checks each source as it is applied and queues SourceHealth events.
+	srcDone := make(chan struct{})
+	go func() {
+		defer close(srcDone)
+		_ = sources.Run(runCtx)
+	}()
+
 	// Housekeeping, so a long-running agent's database stays bounded.
 	go maintain(runCtx, time.Hour, func(ctx context.Context) {
 		applier.Prune(ctx)
@@ -326,6 +333,7 @@ func runRun(ctx context.Context, e *env, args []string) int {
 	err = lc.Run(runCtx)
 	stop()
 	<-dlDone
+	<-srcDone
 
 	switch {
 	case err == nil:

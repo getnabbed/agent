@@ -32,6 +32,8 @@ type Downloads interface {
 type Sources interface {
 	Put(ctx context.Context, tx *store.Tx, s *pb.Source) error
 	Remove(ctx context.Context, tx *store.Tx, id string) error
+	// Test connects to a source now; the error is safe to show users.
+	Test(ctx context.Context, id string) error
 }
 
 // Config configures an Applier.
@@ -116,8 +118,30 @@ func (a *Applier) HandleCommand(ctx context.Context, cmd *pb.Command) *pb.Comman
 
 // HandleQuery implements link.Handler. Queries are read-only and never
 // touch the command log.
-func (a *Applier) HandleQuery(_ context.Context, q *pb.Query) *pb.QueryResult {
-	return &pb.QueryResult{QueryId: q.GetId(), Error: "unsupported"}
+func (a *Applier) HandleQuery(ctx context.Context, q *pb.Query) *pb.QueryResult {
+	switch k := q.GetKind().(type) {
+	case *pb.Query_TestSource:
+		return a.testSource(ctx, q.GetId(), k.TestSource)
+	default:
+		return &pb.QueryResult{QueryId: q.GetId(), Error: "unsupported"}
+	}
+}
+
+// testSource answers TestSource: ok when the provider accepted a
+// connection and login, otherwise ok=false with the reason in error.
+func (a *Applier) testSource(ctx context.Context, id string, t *pb.TestSource) *pb.QueryResult {
+	if a.sources == nil {
+		return &pb.QueryResult{QueryId: id, Error: "unsupported"}
+	}
+
+	if err := a.sources.Test(ctx, t.GetSourceId()); err != nil {
+		a.log.Info("source test failed", "source_id", t.GetSourceId(), "err", err)
+		return &pb.QueryResult{QueryId: id, Error: err.Error()}
+	}
+
+	a.log.Info("source test passed", "source_id", t.GetSourceId())
+
+	return &pb.QueryResult{QueryId: id, Ok: true}
 }
 
 // HandleEventAck implements link.Handler by deleting acknowledged events
