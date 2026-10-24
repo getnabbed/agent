@@ -75,9 +75,17 @@ func (f *fakeEngine) Download(ctx context.Context, job engine.Job, progress func
 	}
 }
 
-type okImporter struct{ imported atomic.Int32 }
+type okImporter struct {
+	imported atomic.Int32
+	// failNext makes the next import fail retryably, as with a missing root.
+	failNext atomic.Bool
+}
 
 func (o *okImporter) Import(_ context.Context, _ engine.Job, _ *engine.Result, d *pb.Download) (*pb.ImportCompleted, error) {
+	if o.failNext.CompareAndSwap(true, false) {
+		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_IMPORT, true, "library root is not set up")
+	}
+
 	o.imported.Add(1)
 
 	return &pb.ImportCompleted{DownloadId: d.GetId(), RootId: "root-1"}, nil
@@ -682,5 +690,35 @@ func TestPayloadRedirectPolicy(t *testing.T) {
 	ref.Id = "downgrade"
 	if err := fetchPayload(context.Background(), f, ref, t.TempDir(), "p"); err == nil {
 		t.Fatal("https to http redirect was followed")
+	}
+}
+
+func TestRetryOfAFailedImportResumesAtImport(t *testing.T) {
+	h := newHarness(t, 1)
+	h.imp.failNext.Store(true)
+
+	if err := h.start(torrentDownload("d1")); err != nil {
+		t.Fatal(err)
+	}
+
+	h.waitStarted()
+	h.eng.release <- nil
+	h.waitState("d1", Failed)
+
+	if err := h.act(Retry, "d1"); err != nil {
+		t.Fatal(err)
+	}
+
+	h.waitState("d1", Done)
+
+	if h.eng.calls.Load() != 1 || h.imp.imported.Load() != 1 {
+		t.Fatalf("got %d engine calls and %d imports, want the download kept and only the import redone", h.eng.calls.Load(), h.imp.imported.Load())
+	}
+
+	got := h.updates("d1")
+	want := []State{Queued, Fetching, Downloading, Assembling, Importing, Failed, Importing, Done}
+
+	if !slices.Equal(got, want) {
+		t.Fatalf("got events %v, want %v", got, want)
 	}
 }

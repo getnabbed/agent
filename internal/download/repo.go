@@ -105,9 +105,10 @@ func transition(ctx context.Context, tx *store.Tx, id string, from, to State, f 
 
 	r, err := tx.ExecContext(ctx, `
 		UPDATE downloads
-		SET state = ?, failure_class = ?, failure_retryable = ?, failure_detail = ?, updated_at = ?
+		SET state = ?, failure_class = ?, failure_retryable = ?, failure_detail = ?, updated_at = ?,
+			failed_from = CASE WHEN ? THEN ? ELSE failed_from END
 		WHERE id = ? AND state = ?`,
-		int32(to), class, retryable, detail, time.Now().UnixMilli(), id, int32(from))
+		int32(to), class, retryable, detail, time.Now().UnixMilli(), to == Failed, int32(from), id, int32(from))
 	if err != nil {
 		return false, err
 	}

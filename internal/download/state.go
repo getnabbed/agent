@@ -2,7 +2,8 @@
 //
 //	QUEUED → FETCHING → DOWNLOADING → ASSEMBLING → IMPORTING → DONE
 //	   ↘ PAUSED (from QUEUED, FETCHING, DOWNLOADING) → QUEUED on resume
-//	   ↘ FAILED (from any running state) → QUEUED on retry
+//	   ↘ FAILED (from any running state) → QUEUED on retry, or straight back to
+//	     ASSEMBLING or IMPORTING when it failed there, with its files on disk
 //	   ↘ CANCELLED (from anything but DONE and CANCELLED)
 //
 // The database is the source of truth. Commands change state inside the

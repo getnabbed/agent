@@ -118,6 +118,11 @@ already at its destination as placed.
 | No video, missing naming details, or the name is taken in the library | `IMPORT` | no |
 | I/O errors | `DISK` | yes |
 
+A `RetryDownload` of a download that failed while assembling or importing
+resumes at that stage, with the files already on disk: the agent sends
+`DownloadUpdate` IMPORTING (or ASSEMBLING) and nothing is downloaded again.
+A download that failed earlier goes back to QUEUED.
+
 ## Not yet
 
 - **`RescanLibrary` and `InventoryReport`:** video files only, at most 500

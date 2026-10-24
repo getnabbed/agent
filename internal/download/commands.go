@@ -134,13 +134,32 @@ func (m *Manager) Act(ctx context.Context, tx *store.Tx, action Action, id strin
 	}
 
 	if action == Retry {
-		if _, err := tx.ExecContext(ctx, "UPDATE downloads SET attempts = attempts + 1, result = '' WHERE id = ?", id); err != nil {
+		var failedFrom int32
+		if err := tx.QueryRowContext(ctx, "SELECT failed_from FROM downloads WHERE id = ?", id).Scan(&failedFrom); err != nil {
+			return err
+		}
+
+		// A failed import or assembly is retried where it failed, with the
+		// files already on disk: nothing is fetched or downloaded again.
+		reset := ", result = ''"
+		if s := State(failedFrom); (s == Assembling || s == Importing) && r.Result != nil {
+			to, reset = s, ""
+		}
+
+		if _, err := tx.ExecContext(ctx, "UPDATE downloads SET attempts = attempts + 1"+reset+" WHERE id = ?", id); err != nil {
 			return err
 		}
 	}
 
 	if _, err := transition(ctx, tx, id, r.State, to, nil); err != nil {
 		return err
+	}
+
+	// Stop the runner as soon as the command commits. Left to the next
+	// reconcile, a resume landing first would put the download back in a
+	// running state and the paused runner would carry on unnoticed.
+	if action == Pause || action == Cancel {
+		tx.AfterCommit(func() { m.stop(id) })
 	}
 
 	return nil
