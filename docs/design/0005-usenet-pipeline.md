@@ -1,7 +1,7 @@
 # 0005: Usenet pipeline
 
-- **Status:** Accepted, 2026-10-24. Connection pool implemented; the later
-  stages are planned.
+- **Status:** Accepted, 2026-10-24. Connection pool and PAR2 verification
+  implemented; repair and extraction are planned.
 - **Scope:** How the agent turns an NZB into verified, extracted files:
   NNTP, yEnc, PAR2 and archive extraction. Import into the library is
   separate.
@@ -24,9 +24,20 @@ out the fastest usenet libraries. Each stage was checked in October 2026.
 
 1. **Download (done).** Articles are fetched through a connection pool per
    provider and decoded into `data/` in the job's work directory.
-2. **Verify and rename.** Fetch the small PAR2 index file, check each file's
-   MD5, and restore real file names for obfuscated releases from the PAR2
-   file descriptions (matched by the hash of the first 16 KiB).
+2. **Verify and rename (done).** The PAR2 index is downloaded with the
+   data; recovery volumes are deferred. Each protected file is matched by
+   size and the MD5 of its first 16 KiB, so obfuscated names are found and
+   renamed to the recovery set's names (sanitised like NZB names, never
+   over an existing file). With no missing articles, that match is enough:
+   every byte already passed a yEnc CRC or torrent piece hash. Otherwise
+   each file is hashed per slice to count the blocks repair needs.
+   The outcome the cloud sees:
+   - All files verify: the download moves on, with the restored names.
+   - Damage within the recovery blocks the release has (counted from the
+     deferred volume names): `REPAIR`, retryable, until repair ships.
+   - Damage beyond them: `INCOMPLETE`, not retryable, so the cloud picks
+     another release.
+   - No usable PAR2 and missing articles: `INCOMPLETE`, not retryable.
 3. **Repair.** Only when verification finds damage: fetch just enough
    recovery volumes (deferred at download time) and repair over GF(2¹⁶).
 4. **Extract.** RAR, 7z or ZIP, into the work directory only, with caps on

@@ -1,0 +1,262 @@
+package par2
+
+import (
+	"bytes"
+	"context"
+	"crypto/md5" //nolint:gosec // PAR2 is defined in terms of MD5.
+	"errors"
+	"io"
+	"io/fs"
+)
+
+// Status is a recovery-set file's state on disk.
+type Status int
+
+// Status values.
+const (
+	// OK means the file is present and matches.
+	OK Status = iota
+	// Damaged means a file was found but some slices do not match.
+	Damaged
+	// Missing means no candidate matches the file at all.
+	Missing
+)
+
+func (s Status) String() string {
+	switch s {
+	case OK:
+		return "ok"
+	case Damaged:
+		return "damaged"
+	default:
+		return "missing"
+	}
+}
+
+// FileResult is the verification of one recovery-set file.
+type FileResult struct {
+	File *File
+	// Found is the candidate path that holds the file, or "" when missing.
+	Found  string
+	Status Status
+	// BadSlices is how many slices repair must rebuild.
+	BadSlices int
+}
+
+// Report is the verification of a recovery set.
+type Report struct {
+	Files []FileResult
+	// Needed is the number of recovery blocks repair needs.
+	Needed int
+}
+
+// Complete reports whether every protected file verified.
+func (r *Report) Complete() bool { return r.Needed == 0 }
+
+// VerifyOptions configure Verify.
+type VerifyOptions struct {
+	// Target returns the path a recovery-set file should have among the
+	// candidates, so a damaged file can be found under its real name.
+	Target func(*File) string
+	// Quick accepts a file whose size and 16 KiB hash match without hashing
+	// all of it. Use it only when the data is otherwise known to be intact,
+	// such as usenet downloads where every article passed its yEnc CRC.
+	Quick bool
+}
+
+type candidate struct {
+	path string
+	size int64
+	h16k [16]byte
+}
+
+// Verify checks the protected files of set against candidates, paths in
+// fsys of downloaded files. Each candidate matches at most one file.
+func Verify(ctx context.Context, fsys fs.FS, set *Set, candidates []string, o VerifyOptions) (*Report, error) {
+	var cands []candidate
+
+	for _, p := range candidates {
+		c, err := describe(fsys, p)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		cands = append(cands, c)
+	}
+
+	used := map[string]bool{}
+	byPath := map[string]candidate{}
+	for _, c := range cands {
+		byPath[c.path] = c
+	}
+
+	rep := &Report{}
+
+	for _, f := range set.Files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		res := FileResult{File: f, Status: Missing, BadSlices: f.SliceCount(set.SliceSize)}
+
+		// Prefer the real name when it also matches by content, then any
+		// candidate with the same size and 16k hash (an obfuscated name),
+		// then the real name holding damaged data.
+		target := ""
+		if o.Target != nil {
+			target = o.Target(f)
+		}
+
+		found := ""
+		if c, ok := byPath[target]; ok && !used[target] && c.size == f.Size && c.h16k == f.MD5_16k {
+			found = target
+		}
+
+		if found == "" {
+			for _, c := range cands {
+				if !used[c.path] && c.size == f.Size && c.h16k == f.MD5_16k {
+					found = c.path
+					break
+				}
+			}
+		}
+
+		matched16k := found != ""
+
+		if found == "" {
+			if _, ok := byPath[target]; ok && !used[target] {
+				found = target
+			}
+		}
+
+		if found == "" {
+			rep.Files = append(rep.Files, res)
+			rep.Needed += res.BadSlices
+
+			continue
+		}
+
+		used[found] = true
+		res.Found = found
+
+		bad, err := check(ctx, fsys, found, f, set.SliceSize, o.Quick && matched16k)
+		if err != nil {
+			return nil, err
+		}
+
+		res.BadSlices = bad
+		if bad > 0 {
+			res.Status = Damaged
+		} else {
+			res.Status = OK
+		}
+
+		rep.Files = append(rep.Files, res)
+		rep.Needed += bad
+	}
+
+	return rep, nil
+}
+
+func describe(fsys fs.FS, p string) (candidate, error) {
+	fi, err := fs.Stat(fsys, p)
+	if err != nil {
+		return candidate{}, err
+	}
+
+	if !fi.Mode().IsRegular() {
+		return candidate{}, fs.ErrNotExist
+	}
+
+	f, err := fsys.Open(p)
+	if err != nil {
+		return candidate{}, err
+	}
+
+	defer func() { _ = f.Close() }()
+
+	h := md5.New() //nolint:gosec // see import
+	if _, err := io.CopyN(h, f, hash16k); err != nil && !errors.Is(err, io.EOF) {
+		return candidate{}, err
+	}
+
+	c := candidate{path: p, size: fi.Size()}
+	copy(c.h16k[:], h.Sum(nil))
+
+	return c, nil
+}
+
+// check returns how many slices of the file at p do not match f. quick
+// trusts an exact size and 16k match.
+func check(ctx context.Context, fsys fs.FS, p string, f *File, sliceSize int64, quick bool) (int, error) {
+	if quick {
+		return 0, nil
+	}
+
+	r, err := fsys.Open(p)
+	if err != nil {
+		return 0, err
+	}
+
+	defer func() { _ = r.Close() }()
+
+	whole := md5.New() //nolint:gosec // see import
+	total := f.SliceCount(sliceSize)
+	buf := make([]byte, sliceSize)
+	bad := 0
+	var read int64
+
+	for i := range total {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+
+		n, err := io.ReadFull(r, buf)
+		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+			return 0, err
+		}
+
+		// Only the file's real length counts toward its MD5; slices are
+		// hashed zero-padded to the slice size.
+		want := min(sliceSize, f.Size-read)
+		valid := min(int64(n), want)
+		whole.Write(buf[:valid])
+		clear(buf[valid:])
+		read += want
+
+		if f.Slices == nil {
+			continue
+		}
+
+		if md5.Sum(buf) != f.Slices[i].MD5 { //nolint:gosec // see import
+			bad++
+		}
+	}
+
+	if f.Slices == nil {
+		// Without slice checksums any mismatch means rebuilding it all.
+		if !bytes.Equal(whole.Sum(nil), f.MD5[:]) || !sameSize(fsys, p, f.Size) {
+			return total, nil
+		}
+
+		return 0, nil
+	}
+
+	if bad == 0 && (!bytes.Equal(whole.Sum(nil), f.MD5[:]) || !sameSize(fsys, p, f.Size)) {
+		// Every slice matched yet the file differs: extra bytes past its end.
+		// Truncating fixes it, which repair handles; count one slice so the
+		// file is not reported intact.
+		bad = 1
+	}
+
+	return bad, nil
+}
+
+func sameSize(fsys fs.FS, p string, size int64) bool {
+	fi, err := fs.Stat(fsys, p)
+	return err == nil && fi.Size() == size
+}

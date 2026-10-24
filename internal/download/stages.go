@@ -8,9 +8,11 @@ import (
 )
 
 // Assembler turns engine output into complete files: PAR2 verify and
-// repair, archive extraction.
+// repair, archive extraction. It returns the result to store, which may list
+// files under new names, or nil to keep res. It must be safe to run again
+// on its own output after a crash.
 type Assembler interface {
-	Assemble(ctx context.Context, job engine.Job, res *engine.Result) error
+	Assemble(ctx context.Context, job engine.Job, res *engine.Result) (*engine.Result, error)
 }
 
 // Importer renames completed files into a library root and reports
@@ -24,13 +26,13 @@ type Importer interface {
 type PassthroughAssembler struct{}
 
 // Assemble implements Assembler.
-func (PassthroughAssembler) Assemble(_ context.Context, _ engine.Job, res *engine.Result) error {
+func (PassthroughAssembler) Assemble(_ context.Context, _ engine.Job, res *engine.Result) (*engine.Result, error) {
 	if res.MissingArticles > 0 {
-		return engine.Fail(pb.FailureClass_FAILURE_CLASS_INCOMPLETE, false,
+		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_INCOMPLETE, false,
 			"%d articles missing and PAR2 repair is not implemented yet", res.MissingArticles)
 	}
 
-	return nil
+	return nil, nil
 }
 
 // UnimplementedImporter fails every import. It is retryable because the

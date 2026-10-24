@@ -12,6 +12,7 @@ import (
 	"github.com/getnabbed/agent/internal/engine"
 	"github.com/getnabbed/agent/internal/engine/torrent"
 	"github.com/getnabbed/agent/internal/engine/usenet"
+	"github.com/getnabbed/agent/internal/postproc"
 	statestore "github.com/getnabbed/agent/internal/store"
 )
 
@@ -67,6 +68,7 @@ func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc 
 		Fetcher:       &download.HTTPFetcher{API: api, Client: hc, Tokens: tokens},
 		Dir:           f.downloadDir,
 		MaxConcurrent: f.maxDownloads,
+		Assembler:     &postproc.Assembler{Log: e.log},
 		Log:           e.log,
 	})
 	if err != nil {

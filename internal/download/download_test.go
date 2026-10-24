@@ -446,7 +446,7 @@ func TestDefaultImporterFailsRetryably(t *testing.T) {
 		t.Fatalf("err = %v, want retryable IMPORT failure", err)
 	}
 
-	err = PassthroughAssembler{}.Assemble(context.Background(), engine.Job{}, &engine.Result{MissingArticles: 2})
+	_, err = PassthroughAssembler{}.Assemble(context.Background(), engine.Job{}, &engine.Result{MissingArticles: 2})
 	if !errors.As(err, &f) || f.Class != pb.FailureClass_FAILURE_CLASS_INCOMPLETE {
 		t.Fatalf("err = %v, want INCOMPLETE failure", err)
 	}

@@ -391,7 +391,7 @@ func (m *Manager) stage(ctx context.Context, r *row) (*engine.Result, error) {
 
 		return e.Download(ctx, job, func(p engine.Progress) { m.progress(r.ID, p) })
 	case Assembling:
-		return nil, m.cfg.Assembler.Assemble(ctx, job, resultOrEmpty(r))
+		return m.cfg.Assembler.Assemble(ctx, job, resultOrEmpty(r))
 	case Importing:
 		return nil, m.cfg.Importer.Import(ctx, job, resultOrEmpty(r), r.Spec)
 	}
