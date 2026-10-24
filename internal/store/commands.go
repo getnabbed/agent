@@ -27,7 +27,10 @@ func (s *Store) ApplyCommand(ctx context.Context, cmd *pb.Command, apply ApplyFu
 		return nil, false, errors.New("store: command has no id")
 	}
 
-	var enqueued bool
+	var (
+		enqueued bool
+		after    []func()
+	)
 
 	err = s.inTx(ctx, func(sqlTx *sql.Tx) error {
 		var stored []byte
@@ -68,13 +71,15 @@ func (s *Store) ApplyCommand(ctx context.Context, cmd *pb.Command, apply ApplyFu
 			return fmt.Errorf("record command result: %w", err)
 		}
 
-		enqueued = tx.enqueued
+		enqueued, after = tx.enqueued, tx.after
 
 		return nil
 	})
 	if err != nil {
 		return nil, false, err
 	}
+
+	runAfter(after)
 
 	if enqueued {
 		s.signalEvents()
@@ -101,6 +106,10 @@ func (s *Store) PruneCommands(ctx context.Context, before time.Time) (int64, err
 
 // oneofName returns the populated "kind" oneof field name of m, such as
 // "start_download", for readable rows and logs.
+// KindName returns the name of the message's set "kind" oneof field, such as
+// "put_source", or "" when none is set.
+func KindName(m proto.Message) string { return oneofName(m) }
+
 func oneofName(m proto.Message) string {
 	r := m.ProtoReflect()
 

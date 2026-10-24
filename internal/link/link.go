@@ -92,9 +92,11 @@ type Config struct {
 	Clock  *clock.Clock
 	Logger *slog.Logger
 
-	Version      string
-	OS           string
-	Capabilities []string
+	Version string
+	OS      string
+	// Capabilities lists what the agent can do now. It is read for every
+	// Hello, and a change after a command reconnects so the cloud sees it.
+	Capabilities func() []string
 
 	MinBackoff   time.Duration // default 1s
 	MaxBackoff   time.Duration // default 60s
@@ -115,6 +117,10 @@ type Client struct {
 
 	// current is the live session, nil between streams.
 	current atomic.Pointer[session]
+
+	// sentCaps are the capabilities in the latest Hello. Only the Run
+	// goroutine and its session touch them, one after the other.
+	sentCaps []string
 }
 
 // New validates cfg and creates the underlying gRPC channel. No network I/O
@@ -238,7 +244,7 @@ func (c *Client) Run(ctx context.Context) error {
 			}
 
 			attempt = 0
-		case errors.Is(err, errStreamAged):
+		case errors.Is(err, errStreamAged), errors.Is(err, errCapabilitiesChanged):
 			delay = 0
 			attempt = 0
 		default:
@@ -246,7 +252,7 @@ func (c *Client) Run(ctx context.Context) error {
 		}
 
 		lvl := slog.LevelWarn
-		if ga != nil || errors.Is(err, errStreamAged) {
+		if ga != nil || errors.Is(err, errStreamAged) || errors.Is(err, errCapabilitiesChanged) {
 			lvl = slog.LevelInfo
 		}
 
@@ -279,8 +285,9 @@ func (e *goAwayError) Error() string {
 }
 
 var (
-	errStreamAged       = errors.New("stream reached max age")
-	errHeartbeatTimeout = errors.New("missed 3 heartbeat acks")
+	errStreamAged          = errors.New("stream reached max age")
+	errCapabilitiesChanged = errors.New("capabilities changed; reconnecting to send a new Hello")
+	errHeartbeatTimeout    = errors.New("missed 3 heartbeat acks")
 )
 
 // session runs one stream. established reports whether Welcome arrived.
@@ -361,6 +368,8 @@ func (c *Client) hello(ctx context.Context, tok auth.AccessToken) (*pb.AgentMess
 		return nil, err
 	}
 
+	c.sentCaps = c.capabilities()
+
 	signedAt := c.cfg.Clock.Now().UnixMilli()
 	sig := c.cfg.Signer.Sign(identity.HelloSigningInput(tok.JTI, c.instanceID, signedAt))
 
@@ -373,7 +382,7 @@ func (c *Client) hello(ctx context.Context, tok auth.AccessToken) (*pb.AgentMess
 		Header: h,
 		Kind: &pb.AgentMessage_Hello{Hello: &pb.Hello{
 			Version:           c.cfg.Version,
-			Capabilities:      c.cfg.Capabilities,
+			Capabilities:      c.sentCaps,
 			InstanceId:        c.instanceID,
 			Os:                c.cfg.OS,
 			Fresh:             fresh,
@@ -446,4 +455,12 @@ func (c *Client) SendTelemetry(key string, t *pb.Telemetry) {
 	if s := c.current.Load(); s != nil {
 		s.telemetry.put(key, &pb.AgentMessage{Header: c.header(""), Kind: &pb.AgentMessage_Telemetry{Telemetry: t}})
 	}
+}
+
+func (c *Client) capabilities() []string {
+	if c.cfg.Capabilities == nil {
+		return nil
+	}
+
+	return c.cfg.Capabilities()
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/getnabbed/agent/internal/identity"
 	"github.com/getnabbed/agent/internal/link"
 	"github.com/getnabbed/agent/internal/lock"
+	"github.com/getnabbed/agent/internal/source"
 	statestore "github.com/getnabbed/agent/internal/store"
 	"github.com/getnabbed/agent/internal/tlsconf"
 	"github.com/getnabbed/agent/internal/version"
@@ -261,7 +262,7 @@ func runRun(ctx context.Context, e *env, args []string) int {
 
 	defer func() { _ = state.Close() }()
 
-	downloads, closeEngines, err := newDownloads(e, rf, state, api, hc, tokens)
+	downloads, nntp, closeEngines, err := newDownloads(e, rf, state, api, hc, tokens)
 	if err != nil {
 		e.log.Error("download setup failed", "err", err)
 		return ExitError
@@ -269,11 +270,17 @@ func runRun(ctx context.Context, e *env, args []string) int {
 
 	defer closeEngines()
 
-	applier := command.New(command.Config{Store: state, Clock: clk, Downloads: downloads, Log: e.log})
+	sources := source.New(source.Config{Store: state, Key: id.SealPrivate(), Engine: nntp, Log: e.log})
+	if err := sources.Load(ctx); err != nil {
+		e.log.Error("cannot load download sources", "err", err)
+		return ExitError
+	}
+
+	applier := command.New(command.Config{Store: state, Clock: clk, Downloads: downloads, Sources: sources, Log: e.log})
 	applier.Prune(ctx)
 
 	lc, err := link.New(link.Config{
-		Capabilities:         downloads.Capabilities(),
+		Capabilities:         downloads.Capabilities,
 		GatewayURL:           creds.GatewayURL,
 		TransportCredentials: credentials.NewTLS(tlsCfg),
 		Tokens:               tokens,

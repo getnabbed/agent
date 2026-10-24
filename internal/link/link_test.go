@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -491,5 +493,69 @@ func TestImplausibleServerTimeIsIgnored(t *testing.T) {
 	s.observeClock(time.Now().Add(90 * time.Second))
 	if off := c.cfg.Clock.Offset(); off < 80*time.Second {
 		t.Fatalf("offset = %v, want a plausible correction applied", off)
+	}
+}
+
+func TestCapabilityChangeSendsNewHelloAfterResult(t *testing.T) {
+	var usenet atomic.Bool
+
+	results := make(chan *pb.CommandResult, 1)
+	c, g, _, _ := start(t, func(n int, srv pb.AgentGatewayService_ConnectServer) error {
+		if err := srv.Send(welcome(20)); err != nil {
+			return err
+		}
+
+		if n > 1 {
+			return ackHeartbeats(srv, nil)
+		}
+
+		// Stands in for PutSource: the command makes usenet available.
+		usenet.Store(true)
+
+		if err := srv.Send(&pb.ControlMessage{Kind: &pb.ControlMessage_Command{Command: &pb.Command{Id: "cmd-src", Kind: &pb.Command_RescanLibrary{RescanLibrary: &pb.RescanLibrary{RootId: "r"}}}}}); err != nil {
+			return err
+		}
+
+		return ackHeartbeats(srv, func(m *pb.AgentMessage) {
+			if r := m.GetCommandResult(); r != nil {
+				results <- r
+			}
+		})
+	})
+
+	c.cfg.Capabilities = func() []string {
+		if usenet.Load() {
+			return []string{"download.torrent", "download.usenet"}
+		}
+
+		return []string{"download.torrent"}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- c.Run(ctx) }()
+
+	if first := nextConn(t, g); !slices.Equal(first.hello.GetCapabilities(), []string{"download.torrent"}) {
+		t.Fatalf("got first Hello capabilities %v, want torrent only", first.hello.GetCapabilities())
+	}
+
+	select {
+	case r := <-results:
+		if r.GetCommandId() != "cmd-src" {
+			t.Fatalf("got result %v", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("got no CommandResult before the reconnect")
+	}
+
+	second := nextConn(t, g)
+	if !slices.Contains(second.hello.GetCapabilities(), "download.usenet") {
+		t.Fatalf("got second Hello capabilities %v, want usenet included", second.hello.GetCapabilities())
+	}
+
+	cancel()
+
+	if err := <-done; err != nil {
+		t.Fatalf("Run returned %v after cancel", err)
 	}
 }

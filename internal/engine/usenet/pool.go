@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/getnabbed/agent/internal/netguard"
 )
 
 const (
@@ -46,7 +48,7 @@ type pool struct {
 	limit    int
 	failures int       // consecutive failed dials
 	retryAt  time.Time // no dials before this
-	authErr  error     // sticky: wrong credentials do not fix themselves
+	fatalErr error     // sticky: bad credentials or a blocked address do not fix themselves
 	learned  bool      // limit was lowered from the configured value
 	closed   bool
 	changed  chan struct{}
@@ -113,8 +115,8 @@ func (pl *pool) tryGet() (*conn, <-chan struct{}, error) {
 	switch {
 	case pl.closed:
 		return nil, nil, errPoolClosed
-	case pl.authErr != nil:
-		return nil, nil, pl.authErr
+	case pl.fatalErr != nil:
+		return nil, nil, pl.fatalErr
 	}
 
 	now := time.Now()
@@ -169,8 +171,10 @@ func (pl *pool) dialSlot(ctx context.Context) (*conn, error) {
 	switch {
 	case ctx.Err() != nil:
 		return nil, ctx.Err()
-	case errors.Is(err, ErrAuth):
-		pl.authErr = err
+	case errors.Is(err, ErrAuth), errors.Is(err, netguard.ErrBlocked):
+		pl.fatalErr = err
+		pl.log.Warn("usenet provider unusable", "err", err)
+
 		return nil, err
 	case errors.Is(err, errCapacity) && pl.open > 0:
 		// The account allows fewer connections than configured, or another
@@ -229,7 +233,7 @@ func (pl *pool) down() bool {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
 
-	return pl.closed || pl.authErr != nil || (pl.failures >= maxDialFailures && time.Now().Before(pl.retryAt))
+	return pl.closed || pl.fatalErr != nil || (pl.failures >= maxDialFailures && time.Now().Before(pl.retryAt))
 }
 
 // closeIdle closes connections idle for longer than idleTimeout.

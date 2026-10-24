@@ -28,6 +28,12 @@ type Downloads interface {
 	Kick()
 }
 
+// Sources stores download sources. *source.Manager implements it.
+type Sources interface {
+	Put(ctx context.Context, tx *store.Tx, s *pb.Source) error
+	Remove(ctx context.Context, tx *store.Tx, id string) error
+}
+
 // Config configures an Applier.
 type Config struct {
 	Store *store.Store
@@ -37,7 +43,10 @@ type Config struct {
 	// Downloads is optional; without it download commands are rejected as
 	// not implemented.
 	Downloads Downloads
-	Log       *slog.Logger
+	// Sources is optional; without it source commands are rejected as not
+	// implemented.
+	Sources Sources
+	Log     *slog.Logger
 }
 
 // Applier dispatches commands to their handlers inside a store transaction.
@@ -45,6 +54,7 @@ type Applier struct {
 	store     *store.Store
 	clock     *clock.Clock
 	downloads Downloads
+	sources   Sources
 	log       *slog.Logger
 }
 
@@ -58,7 +68,7 @@ func New(cfg Config) *Applier {
 		cfg.Log = slog.Default()
 	}
 
-	return &Applier{store: cfg.Store, clock: cfg.Clock, downloads: cfg.Downloads, log: cfg.Log.With("component", "command")}
+	return &Applier{store: cfg.Store, clock: cfg.Clock, downloads: cfg.Downloads, sources: cfg.Sources, log: cfg.Log.With("component", "command")}
 }
 
 // HandleCommand implements link.Handler. The state change and the recorded
@@ -88,9 +98,14 @@ func (a *Applier) HandleCommand(ctx context.Context, cmd *pb.Command) *pb.Comman
 		}
 	}
 
-	if replayed {
-		a.log.Debug("replayed stored command result", "command_id", cmd.GetId(), "outcome", res.GetOutcome())
+	lvl := slog.LevelDebug
+	if o := res.GetOutcome(); o == pb.CommandOutcome_COMMAND_OUTCOME_REJECTED || o == pb.CommandOutcome_COMMAND_OUTCOME_FAILED {
+		lvl = slog.LevelInfo
 	}
+
+	// Result messages are written to be safe to log: they never carry secrets.
+	a.log.Log(ctx, lvl, "command handled", "command_id", cmd.GetId(), "kind", store.KindName(cmd),
+		"outcome", res.GetOutcome(), "error_code", res.GetErrorCode(), "message", res.GetMessage(), "replayed", replayed)
 
 	if a.downloads != nil {
 		a.downloads.Kick()

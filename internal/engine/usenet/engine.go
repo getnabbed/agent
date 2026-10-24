@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/getnabbed/agent/internal/engine"
+	"github.com/getnabbed/agent/internal/netguard"
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
 
@@ -460,7 +461,9 @@ func (d *download) fetch(ctx context.Context, it workItem) error {
 		switch {
 		case errors.Is(err, ErrAuth) && !pl.p.Backup:
 			return engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, false, "usenet provider %s rejected the credentials", pl.p.Host)
-		case errors.Is(err, ErrAuth), errors.Is(err, ErrProviderDown), errors.Is(err, errPoolClosed):
+		case errors.Is(err, netguard.ErrBlocked) && !pl.p.Backup:
+			return engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, false, "usenet provider %s is on a local network address, which sources from the web app may not use", pl.p.Host)
+		case errors.Is(err, ErrAuth), errors.Is(err, netguard.ErrBlocked), errors.Is(err, ErrProviderDown), errors.Is(err, errPoolClosed):
 			// Unusable provider: try the next. A down primary only fails the
 			// download once every primary is down.
 			if !pl.p.Backup {

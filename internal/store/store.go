@@ -218,12 +218,26 @@ type Tx struct {
 	*sql.Tx
 
 	enqueued bool
+	after    []func()
+}
+
+// AfterCommit runs fn once the transaction has committed, and never if it
+// rolls back. Use it for in-memory changes that must match stored state.
+func (t *Tx) AfterCommit(fn func()) { t.after = append(t.after, fn) }
+
+func runAfter(fns []func()) {
+	for _, fn := range fns {
+		fn()
+	}
 }
 
 // Update runs fn in a write transaction. If fn returns an error the
 // transaction rolls back and no enqueued events become visible.
 func (s *Store) Update(ctx context.Context, fn func(tx *Tx) error) error {
-	var enqueued bool
+	var (
+		enqueued bool
+		after    []func()
+	)
 
 	err := s.inTx(ctx, func(sqlTx *sql.Tx) error {
 		tx := &Tx{Tx: sqlTx}
@@ -231,13 +245,15 @@ func (s *Store) Update(ctx context.Context, fn func(tx *Tx) error) error {
 			return err
 		}
 
-		enqueued = tx.enqueued
+		enqueued, after = tx.enqueued, tx.after
 
 		return nil
 	})
 	if err != nil {
 		return err
 	}
+
+	runAfter(after)
 
 	if enqueued {
 		s.signalEvents()

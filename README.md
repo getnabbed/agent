@@ -86,10 +86,17 @@ A missing file at the default location is fine; a missing file named with
 agent: it will also hold the local policy (allowed library roots, limits)
 that the cloud cannot override.
 
-### Usenet provider (temporary)
+### Usenet providers
 
-Until usenet providers are configured in the web app and sealed to the
-agent, set one with `NABBED_NNTP_FILE` (preferred) or `NABBED_NNTP`:
+Add usenet providers in the web app. The browser encrypts the credentials
+to this agent's key, so the cloud stores them but cannot read them, and the
+agent keeps them encrypted on disk. Providers from the web app must use TLS
+and a public host. Pairing the agent again gives it a new key, so its
+providers must be entered again.
+
+A provider on your local network, or one you prefer to keep off the cloud
+entirely, can be set locally with `NABBED_NNTP_FILE` (preferred) or
+`NABBED_NNTP`:
 `nntps://user:password@news.example.com:563?connections=8`. Flag values are
 visible in process lists, so avoid `--nntp` for real passwords.
 

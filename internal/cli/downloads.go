@@ -38,7 +38,7 @@ func (f *runFlags) register(fs *flag.FlagSet, cfg *config.Config) {
 
 // newDownloads builds the engines and the download manager. The returned
 // func closes the engines.
-func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc *http.Client, tokens *auth.TokenSource) (*download.Manager, func(), error) {
+func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc *http.Client, tokens *auth.TokenSource) (*download.Manager, *usenet.Engine, func(), error) {
 	nntpURLs := f.nntp
 	if nntpURLs == "" {
 		nntpURLs = string(e.cfg.Usenet.Provider)
@@ -46,12 +46,13 @@ func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc 
 
 	providers, err := usenet.ParseProviderList(nntpURLs)
 	if err != nil {
-		return nil, nil, fmt.Errorf("usenet provider: %w", err)
+		return nil, nil, nil, fmt.Errorf("usenet provider: %w", err)
 	}
 
 	nntp := usenet.New(e.log)
 	for i, p := range providers {
-		nntp.SetProvider(fmt.Sprintf("config-%d", i+1), p)
+		// The colon keeps these ids apart from control-plane source ids.
+		nntp.SetProvider(fmt.Sprintf("local:%d", i+1), p)
 		e.log.Warn("using a usenet provider from configuration; this is temporary until sources are sealed to the agent", "provider", p.String())
 	}
 
@@ -72,10 +73,10 @@ func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc 
 		_ = bt.Close()
 		_ = nntp.Close()
 
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	return m, func() {
+	return m, nntp, func() {
 		_ = bt.Close()
 		_ = nntp.Close()
 	}, nil

@@ -37,6 +37,9 @@ type Provider struct {
 	Backup bool
 	// TLSConfig overrides the default verification, for tests.
 	TLSConfig *tls.Config
+	// Dial, when set, opens the TCP connection, for example through the
+	// netguard LAN policy for providers the control plane configured.
+	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // String describes the provider without its password.
@@ -117,12 +120,18 @@ type conn struct {
 // dial connects, reads the greeting and authenticates.
 func dial(ctx context.Context, p Provider, timeout time.Duration) (*conn, error) {
 	addr := net.JoinHostPort(p.Host, strconv.Itoa(p.Port))
-	d := &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
+	dialTCP := p.Dial
+	if dialTCP == nil {
+		dialTCP = (&net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}).DialContext
+	}
 
-	var (
-		nc  net.Conn
-		err error
-	)
+	dctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	nc, err := dialTCP(dctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
 
 	if p.TLS {
 		cfg := p.TLSConfig
@@ -130,13 +139,13 @@ func dial(ctx context.Context, p Provider, timeout time.Duration) (*conn, error)
 			cfg = &tls.Config{ServerName: p.Host, MinVersion: tls.VersionTLS12}
 		}
 
-		nc, err = (&tls.Dialer{NetDialer: d, Config: cfg}).DialContext(ctx, "tcp", addr)
-	} else {
-		nc, err = d.DialContext(ctx, "tcp", addr)
-	}
+		tc := tls.Client(nc, cfg)
+		if err := tc.HandshakeContext(dctx); err != nil {
+			_ = nc.Close()
+			return nil, err
+		}
 
-	if err != nil {
-		return nil, err
+		nc = tc
 	}
 
 	c := &conn{nc: nc, tp: textproto.NewConn(&lineLimitConn{Conn: nc}), timeout: timeout}

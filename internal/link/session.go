@@ -3,6 +3,7 @@ package link
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
@@ -158,6 +159,13 @@ func (s *session) commandWorker(ctx context.Context) {
 
 			res.CommandId = cmd.GetId()
 			s.sendControl(ctx, &pb.AgentMessage{Header: s.c.header(cmd.GetId()), Kind: &pb.AgentMessage_CommandResult{CommandResult: res}})
+
+			// A command can change what the agent supports, such as a new usenet
+			// source. The marker queues behind the result, so the result is
+			// written before the session ends and the next Hello carries the change.
+			if !slices.Equal(s.c.capabilities(), s.c.sentCaps) {
+				s.sendControl(ctx, rehelloMarker)
+			}
 		}
 	}
 }
@@ -197,9 +205,19 @@ func (s *session) sendControl(ctx context.Context, m *pb.AgentMessage) {
 	}
 }
 
+// rehelloMarker on the control lane ends the session once everything queued
+// before it has been written. It is never sent.
+var rehelloMarker = &pb.AgentMessage{}
+
 // writer is the only goroutine that calls stream.Send.
 func (s *session) writer(ctx context.Context) error {
-	send := func(m *pb.AgentMessage) error { return s.stream.Send(m) }
+	send := func(m *pb.AgentMessage) error {
+		if m == rehelloMarker {
+			return errCapabilitiesChanged
+		}
+
+		return s.stream.Send(m)
+	}
 	for {
 		// Control traffic always goes first.
 		select {
