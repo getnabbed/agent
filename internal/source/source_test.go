@@ -368,3 +368,28 @@ func TestDefaults(t *testing.T) {
 		t.Fatalf("got %+v, want lowercased host without the dot, port 563, 8 connections", p)
 	}
 }
+
+// The exact objects the web form seals for kind "usenet" (nabbed-frontend
+// PR #51), and the older form without connections.
+func TestAcceptsWebFormPayloads(t *testing.T) {
+	cases := []struct {
+		json  string
+		conns int
+		user  string
+	}{
+		{`{"schema_version":1,"host":"news.newshosting.com","port":563,"tls":true,"insecure_skip_verify":false,"connections":30,"credentials":{"username":"u","password":"p"}}`, 30, "u"},
+		{`{"connections":30,"tls":true,"schema_version":1,"port":563,"insecure_skip_verify":false,"host":"news.newshosting.com"}`, 30, ""},
+		{`{"schema_version":1,"host":"news.newshosting.com","port":563,"tls":true,"insecure_skip_verify":false,"credentials":{"username":"u","password":"p"}}`, 8, "u"},
+	}
+
+	for _, c := range cases {
+		p, err := parseUsenet([]byte(c.json))
+		if err != nil {
+			t.Fatalf("got %v for %s", err, c.json)
+		}
+
+		if p.Host != "news.newshosting.com" || p.Port != 563 || !p.TLS || p.Connections != c.conns || p.Username != c.user {
+			t.Fatalf("got %+v for %s", p, c.json)
+		}
+	}
+}
