@@ -969,9 +969,14 @@ type Hello struct {
 	// the cloud rehydrates it by re-issuing configuration commands.
 	Fresh bool `protobuf:"varint,5,opt,name=fresh,proto3" json:"fresh,omitempty"`
 	// Id of the last Command the agent applied, empty if none.
-	LastCommandId     string                `protobuf:"bytes,6,opt,name=last_command_id,json=lastCommandId,proto3" json:"last_command_id,omitempty"`
-	PendingEventCount uint32                `protobuf:"varint,7,opt,name=pending_event_count,json=pendingEventCount,proto3" json:"pending_event_count,omitempty"`
-	LocalSources      []*LocalSourceSummary `protobuf:"bytes,8,rep,name=local_sources,json=localSources,proto3" json:"local_sources,omitempty"`
+	LastCommandId     string `protobuf:"bytes,6,opt,name=last_command_id,json=lastCommandId,proto3" json:"last_command_id,omitempty"`
+	PendingEventCount uint32 `protobuf:"varint,7,opt,name=pending_event_count,json=pendingEventCount,proto3" json:"pending_event_count,omitempty"`
+	// Every source the control plane has put on this agent (PutSource), in
+	// the order they were first stored. Sources configured on the agent
+	// itself are not listed. The list is complete only when capabilities
+	// include "sources.inventory"; the cloud reconciles against it on every
+	// Hello (design 0006).
+	LocalSources []*LocalSourceSummary `protobuf:"bytes,8,rep,name=local_sources,json=localSources,proto3" json:"local_sources,omitempty"`
 	// Wall-clock time the signature was made, Unix milliseconds.
 	SignedAtMs int64 `protobuf:"varint,9,opt,name=signed_at_ms,json=signedAtMs,proto3" json:"signed_at_ms,omitempty"`
 	// Ed25519 signature by the agent identity key over the canonical Hello
@@ -1081,10 +1086,18 @@ func (x *Hello) GetSignature() []byte {
 	return nil
 }
 
+// LocalSourceSummary describes one stored source without its secrets.
 type LocalSourceSummary struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Kind  string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	// SHA-256 of Source.sealed_config exactly as the agent received it. The
+	// cloud resends a source when this differs from the bytes it holds.
+	SealedConfigSha256 []byte `protobuf:"bytes,3,opt,name=sealed_config_sha256,json=sealedConfigSha256,proto3" json:"sealed_config_sha256,omitempty"`
+	Enabled            bool   `protobuf:"varint,4,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	// False when the stored configuration no longer opens, for example after
+	// the agent was paired again with a new key. It needs sealing again.
+	Usable        bool `protobuf:"varint,5,opt,name=usable,proto3" json:"usable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1131,6 +1144,27 @@ func (x *LocalSourceSummary) GetKind() string {
 		return x.Kind
 	}
 	return ""
+}
+
+func (x *LocalSourceSummary) GetSealedConfigSha256() []byte {
+	if x != nil {
+		return x.SealedConfigSha256
+	}
+	return nil
+}
+
+func (x *LocalSourceSummary) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *LocalSourceSummary) GetUsable() bool {
+	if x != nil {
+		return x.Usable
+	}
+	return false
 }
 
 type Welcome struct {
@@ -4404,10 +4438,13 @@ const file_nabbed_agent_v2_agent_proto_rawDesc = "" +
 	"\fsigned_at_ms\x18\t \x01(\x03R\n" +
 	"signedAtMs\x12\x1c\n" +
 	"\tsignature\x18\n" +
-	" \x01(\fR\tsignature\"8\n" +
+	" \x01(\fR\tsignature\"\x9c\x01\n" +
 	"\x12LocalSourceSummary\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
-	"\x04kind\x18\x02 \x01(\tR\x04kind\"\x92\x01\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x120\n" +
+	"\x14sealed_config_sha256\x18\x03 \x01(\fR\x12sealedConfigSha256\x12\x18\n" +
+	"\aenabled\x18\x04 \x01(\bR\aenabled\x12\x16\n" +
+	"\x06usable\x18\x05 \x01(\bR\x06usable\"\x92\x01\n" +
 	"\aWelcome\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12!\n" +

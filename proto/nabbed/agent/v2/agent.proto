@@ -86,6 +86,11 @@ message Hello {
   // Id of the last Command the agent applied, empty if none.
   string last_command_id = 6;
   uint32 pending_event_count = 7;
+  // Every source the control plane has put on this agent (PutSource), in
+  // the order they were first stored. Sources configured on the agent
+  // itself are not listed. The list is complete only when capabilities
+  // include "sources.inventory"; the cloud reconciles against it on every
+  // Hello (design 0006).
   repeated LocalSourceSummary local_sources = 8;
   // Wall-clock time the signature was made, Unix milliseconds.
   int64 signed_at_ms = 9;
@@ -94,9 +99,17 @@ message Hello {
   bytes signature = 10;
 }
 
+// LocalSourceSummary describes one stored source without its secrets.
 message LocalSourceSummary {
   string id = 1;
   string kind = 2;
+  // SHA-256 of Source.sealed_config exactly as the agent received it. The
+  // cloud resends a source when this differs from the bytes it holds.
+  bytes sealed_config_sha256 = 3;
+  bool enabled = 4;
+  // False when the stored configuration no longer opens, for example after
+  // the agent was paired again with a new key. It needs sealing again.
+  bool usable = 5;
 }
 
 message Welcome {

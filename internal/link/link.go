@@ -15,6 +15,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/url"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -97,6 +98,10 @@ type Config struct {
 	// Capabilities lists what the agent can do now. It is read for every
 	// Hello, and a change after a command reconnects so the cloud sees it.
 	Capabilities func() []string
+	// Sources lists the control-plane sources the agent holds, read for every
+	// Hello. Setting it adds the "sources.inventory" capability, which tells
+	// the cloud the list is complete.
+	Sources func(context.Context) ([]*pb.LocalSourceSummary, error)
 
 	MinBackoff   time.Duration // default 1s
 	MaxBackoff   time.Duration // default 60s
@@ -368,7 +373,18 @@ func (c *Client) hello(ctx context.Context, tok auth.AccessToken) (*pb.AgentMess
 		return nil, err
 	}
 
+	var sources []*pb.LocalSourceSummary
+	if c.cfg.Sources != nil {
+		// An incomplete list would read as sources missing, so a failed read
+		// fails the Hello and the session is retried.
+		sources, err = c.cfg.Sources(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list sources for hello: %w", err)
+		}
+	}
+
 	c.sentCaps = c.capabilities()
+	c.log.Debug("sending hello", "capabilities", c.sentCaps, "fresh", fresh, "last_command_id", last, "sources", len(sources))
 
 	signedAt := c.cfg.Clock.Now().UnixMilli()
 	sig := c.cfg.Signer.Sign(identity.HelloSigningInput(tok.JTI, c.instanceID, signedAt))
@@ -388,6 +404,7 @@ func (c *Client) hello(ctx context.Context, tok auth.AccessToken) (*pb.AgentMess
 			Fresh:             fresh,
 			LastCommandId:     last,
 			PendingEventCount: pending,
+			LocalSources:      sources,
 			SignedAtMs:        signedAt,
 			Signature:         sig,
 		}},
@@ -457,10 +474,18 @@ func (c *Client) SendTelemetry(key string, t *pb.Telemetry) {
 	}
 }
 
+// CapSourcesInventory says Hello.local_sources is the complete list.
+const CapSourcesInventory = "sources.inventory"
+
 func (c *Client) capabilities() []string {
-	if c.cfg.Capabilities == nil {
-		return nil
+	var caps []string
+	if c.cfg.Capabilities != nil {
+		caps = c.cfg.Capabilities()
 	}
 
-	return c.cfg.Capabilities()
+	if c.cfg.Sources != nil {
+		caps = append(slices.Clip(caps), CapSourcesInventory)
+	}
+
+	return caps
 }

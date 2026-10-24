@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/getnabbed/agent/internal/identity"
+	"github.com/getnabbed/agent/internal/link"
 	"github.com/getnabbed/agent/internal/source"
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
@@ -167,6 +168,15 @@ func TestRunPairsConnectsAndStopsOnRevoke(t *testing.T) {
 
 	if !slices.Contains(second.GetCapabilities(), "download.usenet") || second.GetLastCommandId() != "cmd-src" {
 		t.Fatalf("got second Hello capabilities %v, last command %q; want usenet and cmd-src", second.GetCapabilities(), second.GetLastCommandId())
+	}
+
+	if !slices.Contains(first.GetCapabilities(), link.CapSourcesInventory) || len(first.GetLocalSources()) != 0 {
+		t.Fatalf("got first Hello capabilities %v and %d sources, want an empty inventory", first.GetCapabilities(), len(first.GetLocalSources()))
+	}
+
+	if inv := second.GetLocalSources(); len(inv) != 1 || inv[0].GetKind() != source.KindUsenet ||
+		!inv[0].GetUsable() || len(inv[0].GetSealedConfigSha256()) != 32 {
+		t.Fatalf("got second Hello sources %v, want the source just put", inv)
 	}
 
 	if strings.Contains(errb.String(), `"password"`) || strings.Contains(errb.String(), `:"p"`) {

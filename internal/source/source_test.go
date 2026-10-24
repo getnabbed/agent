@@ -1,9 +1,11 @@
 package source
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -391,5 +393,71 @@ func TestAcceptsWebFormPayloads(t *testing.T) {
 		if p.Host != "news.newshosting.com" || p.Port != 563 || !p.TLS || p.Connections != c.conns || p.Username != c.user {
 			t.Fatalf("got %+v for %s", p, c.json)
 		}
+	}
+}
+
+func TestInventoryReportsStoredSources(t *testing.T) {
+	f := newFixture(t)
+
+	a, b := f.source(t, "src-1", validConfig()), f.source(t, "src-2", validConfig())
+	b.Enabled = false
+
+	for _, s := range []*pb.Source{a, b} {
+		if err := f.put(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	inv, err := f.m.Inventory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sum := sha256.Sum256(a.GetSealedConfig())
+	if len(inv) != 2 || inv[0].GetId() != "src-1" || inv[1].GetId() != "src-2" ||
+		!bytes.Equal(inv[0].GetSealedConfigSha256(), sum[:]) || inv[0].GetKind() != KindUsenet ||
+		!inv[0].GetEnabled() || inv[1].GetEnabled() || !inv[0].GetUsable() || !inv[1].GetUsable() {
+		t.Fatalf("got inventory %v, want both sources in order with the hash of the sealed bytes", inv)
+	}
+
+	if err := f.store.Update(context.Background(), func(tx *store.Tx) error {
+		return f.m.Remove(context.Background(), tx, "src-2")
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if inv, _ := f.m.Inventory(context.Background()); len(inv) != 1 {
+		t.Fatalf("got %d sources after RemoveSource, want 1", len(inv))
+	}
+}
+
+func TestInventoryMarksSourcesSealedToAnOldKey(t *testing.T) {
+	f := newFixture(t)
+
+	if err := f.put(f.source(t, "src-1", validConfig())); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pairing again replaces the key; the stored box no longer opens.
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.key = key
+	f.reopen(t)
+
+	inv, err := f.m.Inventory(context.Background())
+	if err != nil || len(inv) != 1 || inv[0].GetUsable() {
+		t.Fatalf("got %v, %v; want the source listed as unusable", inv, err)
+	}
+
+	// The control plane seals it again for the new key.
+	if err := f.put(f.source(t, "src-1", validConfig())); err != nil {
+		t.Fatal(err)
+	}
+
+	if inv, _ := f.m.Inventory(context.Background()); !inv[0].GetUsable() {
+		t.Fatal("got the source still unusable after a fresh PutSource")
 	}
 }

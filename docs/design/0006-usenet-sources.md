@@ -89,6 +89,51 @@ away), the agent sends the `CommandResult`, then closes the stream and
 reconnects at once with a new `Hello`. That reconnect is not `fresh`, so it
 does not trigger rehydration.
 
+### Reconciliation on every Hello
+
+Commands queued while the agent was offline arrive after it reconnects,
+but a queue only replays what was sent. Restoring an older data directory,
+a failed command, or a lost queue would leave the agent and the cloud
+disagreeing, and nothing would notice. So the agent reports what it holds,
+and the cloud brings it in line on every `Hello`, not only `fresh` ones.
+
+With the capability `sources.inventory`, `Hello.local_sources` is the
+complete list of sources the control plane has put on the agent, in the
+order they were first stored. Sources configured on the agent itself
+(`NABBED_NNTP`) are never listed. Each entry has:
+
+| Field | Meaning |
+|---|---|
+| `id`, `kind` | As in the `Source`. |
+| `sealed_config_sha256` | SHA-256 of `sealed_config` exactly as received. It reveals nothing about the contents. |
+| `enabled` | As last put. |
+| `usable` | False when the stored box no longer opens, for example after re-pairing. |
+
+The cloud compares this list with the sources it holds for the agent:
+
+| Agent reports | Cloud holds | Cloud sends |
+|---|---|---|
+| Nothing for the id | Source | `PutSource` |
+| Different hash or `enabled` | Source | `PutSource` with its stored bytes |
+| `usable: false` | Source | Nothing; mark `needsReseal` |
+| The id | Nothing (deleted) | `RemoveSource` |
+| Same hash and `enabled` | Source | Nothing |
+
+Both commands are idempotent and an unchanged `PutSource` keeps the live
+pool, so reconciling after the queue has already delivered is harmless.
+Without the capability (older agents), `local_sources` is empty and means
+nothing; the cloud must not send removals based on it.
+
+The list is read from the agent's store when each `Hello` is built. If that
+read fails, the agent does not send the `Hello` and retries the connection
+instead, because a partial list would look like sources are missing.
+
+Observed on 2026-10-24 against production, with no sources in the cloud:
+the gateway accepted the `Hello` carrying `sources.inventory` and an empty
+list, and sent nothing back. The agent also still reports `fresh: true`,
+because it has never applied a command, so every connect is treated as a
+first connection.
+
 ## Cloud-side status
 
 Confirmed by the cloud session on 2026-10-24:
@@ -99,6 +144,9 @@ Confirmed by the cloud session on 2026-10-24:
   `DownloadSource.needsReseal` lets the UI ask for credentials again.
 
 Open items for the cloud:
+
+0. **Reconcile against `local_sources`** on every Hello whose
+   capabilities include `sources.inventory` (see above).
 
 1. **Skip stale sources on rehydration.** Rehydrate still sends
    `PutSource` for sources with `needsReseal`; each gets

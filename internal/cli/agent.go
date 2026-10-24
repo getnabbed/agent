@@ -281,6 +281,7 @@ func runRun(ctx context.Context, e *env, args []string) int {
 
 	lc, err := link.New(link.Config{
 		Capabilities:         downloads.Capabilities,
+		Sources:              sources.Inventory,
 		GatewayURL:           creds.GatewayURL,
 		TransportCredentials: credentials.NewTLS(tlsCfg),
 		Tokens:               tokens,

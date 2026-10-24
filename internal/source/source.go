@@ -77,6 +77,9 @@ type Manager struct {
 	// applied fingerprints what the engine holds per source, so a repeated
 	// PutSource (as in rehydration) does not reset live connections.
 	applied map[string][sha256.Size]byte
+	// unusable holds stored sources that no longer open, reported in Hello
+	// so the control plane can ask for them to be sealed again.
+	unusable map[string]bool
 }
 
 // New returns a Manager. Call Load before applying commands.
@@ -87,8 +90,9 @@ func New(cfg Config) *Manager {
 
 	return &Manager{
 		store: cfg.Store, key: cfg.Key, engine: cfg.Engine,
-		log:     cfg.Log.With("component", "source"),
-		applied: map[string][sha256.Size]byte{},
+		log:      cfg.Log.With("component", "source"),
+		applied:  map[string][sha256.Size]byte{},
+		unusable: map[string]bool{},
 	}
 }
 
@@ -144,6 +148,8 @@ func (m *Manager) Remove(ctx context.Context, tx *store.Tx, id string) error {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 
+		delete(m.unusable, id)
+
 		if _, ok := m.applied[id]; ok {
 			m.engine.RemoveProvider(id)
 			delete(m.applied, id)
@@ -174,6 +180,10 @@ func (m *Manager) Load(ctx context.Context) error {
 
 		p, err := m.open(s)
 		if err != nil {
+			m.mu.Lock()
+			m.unusable[s.GetId()] = true
+			m.mu.Unlock()
+
 			m.log.Warn("skipping stored source", "source_id", s.GetId(), "err", err)
 			continue
 		}
@@ -182,6 +192,47 @@ func (m *Manager) Load(ctx context.Context) error {
 	}
 
 	return rows.Err()
+}
+
+// Inventory lists the stored sources for Hello, in the order they were
+// first stored. It reads the store, so it reflects committed commands
+// only, and it never includes configuration contents.
+func (m *Manager) Inventory(ctx context.Context) ([]*pb.LocalSourceSummary, error) {
+	rows, err := m.store.DB().QueryContext(ctx, "SELECT id, kind, sealed_config, enabled FROM sources ORDER BY rowid")
+	if err != nil {
+		return nil, fmt.Errorf("list sources: %w", err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var out []*pb.LocalSourceSummary
+
+	for rows.Next() {
+		var (
+			s      pb.LocalSourceSummary
+			sealed []byte
+		)
+
+		if err := rows.Scan(&s.Id, &s.Kind, &sealed, &s.Enabled); err != nil {
+			return nil, fmt.Errorf("list sources: %w", err)
+		}
+
+		sum := sha256.Sum256(sealed)
+		s.SealedConfigSha256 = sum[:]
+		out = append(out, &s)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list sources: %w", err)
+	}
+
+	m.mu.Lock()
+	for _, s := range out {
+		s.Usable = !m.unusable[s.Id]
+	}
+	m.mu.Unlock()
+
+	return out, nil
 }
 
 // open validates s and unseals its configuration.
@@ -220,6 +271,7 @@ func (m *Manager) apply(id, name string, enabled bool, p usenet.Provider, fp [sh
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	delete(m.unusable, id)
 	have, ok := m.applied[id]
 
 	switch {
