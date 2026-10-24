@@ -157,3 +157,49 @@ func TestLocalProvidersAreNotReported(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	f.healthEvents(t, 0)
 }
+
+func (f *fakeEngine) checkCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return len(f.checks)
+}
+
+func TestFailingSourceIsCheckedAgainUntilItRecovers(t *testing.T) {
+	f := newFixture(t)
+	f.m.recheck.base, f.m.recheck.max, f.m.recheck.tick = 10*time.Millisecond, 40*time.Millisecond, 5*time.Millisecond
+	f.engine.setCheckErr(usenet.ErrAuth)
+	f.run(t)
+
+	if err := f.put(f.source(t, "src-1", validConfig())); err != nil {
+		t.Fatal(err)
+	}
+
+	f.healthEvents(t, 1)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for f.engine.checkCount() < 3 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if n := f.engine.checkCount(); n < 3 {
+		t.Fatalf("got %d checks of a failing source, want it checked again", n)
+	}
+
+	// Still one event: failing again is not news.
+	f.healthEvents(t, 1)
+
+	f.engine.setCheckErr(nil)
+
+	if evs := f.healthEvents(t, 2); !evs[1].GetHealthy() {
+		t.Fatalf("got %v, want recovery reported by a background check", evs[1])
+	}
+
+	// Healthy sources are not polled.
+	n := f.engine.checkCount()
+	time.Sleep(100 * time.Millisecond)
+
+	if got := f.engine.checkCount(); got != n {
+		t.Fatalf("got %d more checks of a healthy source, want none", got-n)
+	}
+}

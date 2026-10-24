@@ -110,7 +110,11 @@ func (s *fakeNNTP) serve(c net.Conn) {
 					_ = tp.PrintfLine("481 bad user")
 				}
 			case "PASS":
-				if val == s.pass {
+				s.mu.Lock()
+				ok := val == s.pass
+				s.mu.Unlock()
+
+				if ok {
 					authed = true
 					_ = tp.PrintfLine("281 ok")
 				} else {
@@ -158,4 +162,13 @@ func (s *fakeNNTP) limit(n int) {
 	s.mu.Lock()
 	s.maxConns = n
 	s.mu.Unlock()
+}
+
+// setPass changes the password the server accepts, as when a user renews
+// an account.
+func (s *fakeNNTP) setPass(pass string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.pass = pass
 }

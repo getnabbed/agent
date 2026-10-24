@@ -175,6 +175,10 @@ The agent reports each source's health so the web app can show it.
   it healthy. A login failure or blocked address makes it unhealthy at
   once. Five failed connection attempts in a row make it unhealthy, and
   one success recovers it.
+- **Failing sources are checked again** in the background after 1 minute,
+  then 2, 4 and so on up to an hour between attempts, so the status
+  recovers without a download needing the provider. The cap keeps failed
+  logins rare enough that a provider should not lock the account.
 - **Only changes are sent:** `SourceHealth{source_id, healthy, detail}`
   goes through the outbox, so it survives a reconnect. A provider failing
   over and over sends one event. After a restart, each source's first
@@ -193,7 +197,8 @@ The agent reports each source's health so the web app can show it.
   A healthy report has an empty `detail`.
 
 `TestSource{source_id}` (a query, for a "test connection" button) runs the
-same check at once, within 30 seconds:
+same check at once, within 30 seconds. It always tries a real login, even
+after an earlier one failed, so a renewed account recovers from the button:
 
 - `QueryResult{ok: true}` means it connected and logged in.
 - `ok: false` puts the reason in `error`: the details above, or "unknown

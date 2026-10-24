@@ -17,6 +17,12 @@ const (
 	checkTimeout = 90 * time.Second
 	// testTimeout bounds a TestSource query, which a user is waiting on.
 	testTimeout = 30 * time.Second
+	// A failing source is checked again after recheckBase, doubling up to
+	// recheckMax, so its status recovers without a download needing it. The
+	// cap keeps failed logins rare enough not to get an account locked.
+	recheckBase = time.Minute
+	recheckMax  = time.Hour
+	recheckTick = 15 * time.Second
 )
 
 // Health reporting: the engine calls onHealth when a provider's health
@@ -46,14 +52,19 @@ func (m *Manager) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
+	tick := time.NewTicker(m.recheck.tick)
+	defer tick.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-m.wake:
+		case <-tick.C:
 		}
 
 		m.mu.Lock()
+		m.dueRechecks(time.Now())
 		checks, changed := m.toCheck, m.changed
 		m.toCheck, m.changed = map[string]bool{}, map[string]bool{}
 		m.mu.Unlock()
@@ -85,6 +96,10 @@ func (m *Manager) report(ctx context.Context, id string) {
 	m.mu.Lock()
 	_, ours := m.applied[id] // not a provider configured on the agent itself
 	last, sent := m.reported[id]
+
+	if ours {
+		m.schedule(id, h, time.Now())
+	}
 	m.mu.Unlock()
 
 	if !ours || (sent && last == h) {
@@ -115,6 +130,7 @@ func (m *Manager) report(ctx context.Context, id string) {
 func (m *Manager) queueCheck(id string) {
 	m.toCheck[id] = true
 	delete(m.reported, id) // a new configuration starts a new history
+	delete(m.recheck.due, id)
 
 	m.signal()
 }
@@ -164,4 +180,47 @@ func (m *Manager) Test(ctx context.Context, id string) error {
 	}
 
 	return errors.New(usenet.Describe(err))
+}
+
+// recheck holds the schedule for checking failing sources again.
+type recheck struct {
+	base, max, tick time.Duration
+	due             map[string]*retry
+}
+
+type retry struct {
+	next  time.Time
+	delay time.Duration
+}
+
+// schedule starts or stops rechecking id after a health observation. Call
+// with mu held.
+func (m *Manager) schedule(id string, h usenet.Health, now time.Time) {
+	if h.State != usenet.HealthFailing {
+		delete(m.recheck.due, id)
+		return
+	}
+
+	if _, ok := m.recheck.due[id]; !ok {
+		m.recheck.due[id] = &retry{next: now.Add(m.recheck.base), delay: m.recheck.base}
+	}
+}
+
+// dueRechecks queues a check for each failing source whose time has come
+// and pushes its next one back. Call with mu held.
+func (m *Manager) dueRechecks(now time.Time) {
+	for id, r := range m.recheck.due {
+		if _, live := m.applied[id]; !live {
+			delete(m.recheck.due, id)
+			continue
+		}
+
+		if now.Before(r.next) {
+			continue
+		}
+
+		m.toCheck[id] = true
+		r.delay = min(2*r.delay, m.recheck.max)
+		r.next = now.Add(r.delay)
+	}
 }

@@ -64,9 +64,10 @@ func (pl *pool) currentHealth() Health {
 }
 
 // check dials one connection now and returns why it failed, ignoring dial
-// back-off. Open connections that are working already prove the provider
-// works, so a busy pool is not dialled past its limit. A successful
-// connection is kept for downloads.
+// back-off and any earlier login failure: the user may have fixed the
+// account since. Open connections that are working already prove the
+// provider works, so a busy pool is not dialled past its limit. A
+// successful connection is kept for downloads and clears earlier failures.
 func (pl *pool) check(ctx context.Context) error {
 	for {
 		pl.mu.Lock()
@@ -75,12 +76,7 @@ func (pl *pool) check(ctx context.Context) error {
 		case pl.closed:
 			pl.mu.Unlock()
 			return errPoolClosed
-		case pl.fatalErr != nil:
-			err := pl.fatalErr
-			pl.mu.Unlock()
-
-			return err
-		case pl.health.State == HealthOK && pl.open > 0:
+		case pl.health.State == HealthOK && pl.open > 0 && pl.fatalErr == nil:
 			pl.mu.Unlock()
 			return nil
 		case pl.open >= pl.limit:
@@ -103,7 +99,11 @@ func (pl *pool) check(ctx context.Context) error {
 		changed := false
 
 		if err == nil {
-			pl.failures = 0
+			if pl.fatalErr != nil {
+				pl.log.Info("usenet provider usable again", "was", pl.fatalErr)
+			}
+
+			pl.failures, pl.fatalErr = 0, nil
 			changed = pl.setHealth(Health{State: HealthOK})
 			pl.idle = append(pl.idle, idleConn{c: c, used: time.Now()})
 		} else {

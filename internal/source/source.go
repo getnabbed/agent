@@ -88,6 +88,7 @@ type Manager struct {
 	changed  map[string]bool
 	toCheck  map[string]bool
 	reported map[string]usenet.Health
+	recheck  recheck
 }
 
 // New returns a Manager. Call Load before applying commands, and Run to
@@ -106,6 +107,7 @@ func New(cfg Config) *Manager {
 		changed:  map[string]bool{},
 		toCheck:  map[string]bool{},
 		reported: map[string]usenet.Health{},
+		recheck:  recheck{base: recheckBase, max: recheckMax, tick: recheckTick, due: map[string]*retry{}},
 	}
 
 	if m.engine != nil {

@@ -135,3 +135,30 @@ func TestDescribeKeepsDetailsShortAndPrintable(t *testing.T) {
 		t.Fatalf("got %q", d)
 	}
 }
+
+func TestCheckRetriesAfterALoginFailure(t *testing.T) {
+	s := newFakeNNTP(t, "user", "old")
+	e := newTestEngine(t)
+	e.SetProvider("src", s.provider("user", "new", 2))
+
+	if err := e.Check(context.Background(), "src"); !errors.Is(err, ErrAuth) {
+		t.Fatalf("got %v, want ErrAuth", err)
+	}
+
+	// The user renews the account; the stored password now works.
+	s.setPass("new")
+
+	if err := e.Check(context.Background(), "src"); err != nil {
+		t.Fatalf("got %v, want the check to try again and pass", err)
+	}
+
+	if h, _ := e.Health("src"); h.State != HealthOK {
+		t.Fatalf("got %+v, want OK", h)
+	}
+
+	// Downloads may use the provider again.
+	job, _ := buildJob(t, s, map[string][]byte{"a.bin": randBytes(10_000)}, 5_000, nil)
+	if _, err := e.Download(context.Background(), job, nil); err != nil {
+		t.Fatalf("got %v downloading after recovery", err)
+	}
+}
