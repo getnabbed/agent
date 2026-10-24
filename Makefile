@@ -8,7 +8,7 @@ LDFLAGS  := -s -w \
 	-X $(MODULE)/internal/version.Commit=$(COMMIT) \
 	-X $(MODULE)/internal/version.Date=$(DATE)
 
-.PHONY: all build install test lint fmt vet tidy clean proto proto-lint vuln docker snapshot
+.PHONY: all build install test lint fmt vet tidy clean proto proto-lint proto-breaking proto-push vuln docker snapshot
 
 all: lint test build
 
@@ -30,6 +30,18 @@ proto:
 proto-lint:
 	buf lint
 	buf format --diff --exit-code
+
+# The agent publishes the wire contract to the Buf Schema Registry; the
+# cloud generates its code from there.
+BSR_MODULE := buf.build/nabbed/agent
+
+proto-breaking:
+	buf breaking --against $(BSR_MODULE)
+
+# Labels: main, and git-<commit> so consumers can pin an exact contract.
+proto-push: proto-lint proto-breaking
+	@test -z "$$(git status --porcelain proto)" || { echo "proto/ has uncommitted changes; commit them first" >&2; exit 1; }
+	buf push --label main --label git-$$(git rev-parse --short=12 HEAD)
 
 vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

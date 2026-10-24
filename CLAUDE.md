@@ -13,6 +13,8 @@ make test         # go test -race -cover ./...
 make lint         # golangci-lint (config in .golangci.yml)
 make proto        # regenerate pkg/proto from proto/ with buf
 make proto-lint   # buf lint + format check
+make proto-breaking # buf breaking against the published module
+make proto-push   # publish proto/ to buf.build/nabbed/agent (labels main, git-<sha>)
 make vuln         # govulncheck on code paths the agent calls
 make docker       # build the container image from source
 make snapshot     # unsigned GoReleaser build of every release archive
@@ -23,6 +25,12 @@ them); GitHub Actions are pinned by commit SHA. Keep it that way.
 
 Generated code in `pkg/proto/` is committed and never edited by hand. Change
 `proto/` and run `make proto`.
+
+The wire contract is published to the Buf Schema Registry as
+`buf.build/nabbed/agent`, and the cloud generates its code from there. After
+changing `proto/`: run `make proto proto-lint proto-breaking`, commit, then
+`make proto-push`. Tell the cloud the `git-<sha>` label to pin. Never make a
+breaking change in `v2`.
 
 ## Go style guide
 
