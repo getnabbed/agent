@@ -1,23 +1,30 @@
-// Package par2 reads PAR 2.0 recovery sets and verifies files against them.
-// It parses the packets in .par2 files, finds which downloaded files match
-// which recovery-set files (by name, or by size and the hash of their first
-// 16 KiB when names are obfuscated), and counts the slices repair would need.
+// Package par2 reads PAR 2.0 recovery sets, verifies files against them and
+// repairs damaged or missing files from recovery slices.
 //
-// Repair itself is not implemented yet; see design 0005.
+// Parsing reads the packets in .par2 files. Verification finds which
+// downloaded files match which recovery-set files (by name, or by size and
+// the hash of their first 16 KiB when names are obfuscated) and which slices
+// of each are damaged. Repair rebuilds those slices with Reed–Solomon
+// decoding over GF(2^16), exactly as PAR 2.0 specifies, reading recovery
+// slices from the volume files where the parser found them rather than
+// holding them in memory. Design 0005 describes how the agent uses it.
 //
 // All input is untrusted: packets are bounded in size, checked against their
-// MD5, and ignored when they belong to another recovery set.
+// MD5, and ignored when they belong to another recovery set. Repair bounds
+// its memory and refuses sets larger than PAR 2.0 allows.
 package par2
 
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"crypto/md5" //nolint:gosec // PAR2 is defined in terms of MD5; it is used for integrity, not security.
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strconv"
 )
 
@@ -30,6 +37,8 @@ const (
 	maxFiles = 32768
 	// hash16k is how much of each file the 16k hash covers.
 	hash16k = 16 << 10
+	// maxRecoveryRecords bounds the recovery slice locations kept per set.
+	maxRecoveryRecords = 1 << 16
 )
 
 var magic = []byte("PAR2\x00PKT")
@@ -54,6 +63,9 @@ var (
 	// ErrIncomplete means the main packet lists files whose descriptions are
 	// missing.
 	ErrIncomplete = errors.New("par2: recovery set is missing file descriptions")
+	// ErrTooManySlices means the recovery set has more input slices than
+	// PAR 2.0 allows.
+	ErrTooManySlices = errors.New("par2: recovery set has too many input slices")
 )
 
 // ID is a 16-byte PAR2 identifier: a recovery set or a file.
@@ -63,13 +75,26 @@ type ID [16]byte
 type Set struct {
 	ID        ID
 	SliceSize int64
-	// Files are protected by recovery data, in main-packet order.
+	// Files are protected by recovery data, in main-packet order, which is
+	// also the order of their input slices.
 	Files []*File
 	// Unprotected are listed for verification only.
 	Unprotected []*File
 	// Exponents of the recovery slices seen in the parsed input.
 	RecoveryExponents map[uint32]bool
-	Creator           string
+	// Recovery locates the recovery slices read with ReadFile, one per
+	// exponent, sorted by exponent.
+	Recovery []RecoverySlice
+	Creator  string
+}
+
+// RecoverySlice locates one recovery slice's data in a volume file.
+type RecoverySlice struct {
+	Exponent uint32
+	// Source is the name passed to ReadFile.
+	Source string
+	// Offset is where the slice's SliceSize bytes of data start in Source.
+	Offset int64
 }
 
 // File is one file of a recovery set.
@@ -110,19 +135,33 @@ type pending struct {
 	descs     map[ID]*File
 	slices    map[ID][]Slice
 	exponents map[uint32]bool
+	recovery  []located
 	creator   string
+}
+
+// located is a verified recovery slice whose data length is checked against
+// the slice size once the main packet is known.
+type located struct {
+	RecoverySlice
+	length int64
 }
 
 // NewParser returns an empty Parser.
 func NewParser() *Parser { return &Parser{sets: map[ID]*pending{}} }
 
 // Read consumes one .par2 file. Damaged or foreign bytes between packets are
-// skipped, as the format allows.
-func (p *Parser) Read(r io.Reader) error {
-	br := bufio.NewReaderSize(r, 64<<10)
+// skipped, as the format allows. Recovery slices are counted but cannot be
+// used for repair; read volumes with ReadFile for that.
+func (p *Parser) Read(r io.Reader) error { return p.ReadFile("", r) }
+
+// ReadFile is Read for the file called name, and also records where each
+// recovery slice's data lies in it so Repair can read it later. r must
+// start at the beginning of the file.
+func (p *Parser) ReadFile(name string, r io.Reader) error {
+	sc := &scanner{br: bufio.NewReaderSize(r, 64<<10), name: name}
 
 	for {
-		ok, err := seekMagic(br)
+		ok, err := sc.seekMagic()
 		if err != nil {
 			return err
 		}
@@ -131,16 +170,37 @@ func (p *Parser) Read(r io.Reader) error {
 			return nil
 		}
 
-		if err := p.packet(br); err != nil {
+		if err := p.packet(sc); err != nil {
 			return err
 		}
 	}
 }
 
-// seekMagic advances br to the next packet magic. It returns false at EOF.
-func seekMagic(br *bufio.Reader) (bool, error) {
+// scanner reads one file and tracks the offset of the next unread byte.
+type scanner struct {
+	br   *bufio.Reader
+	name string
+	pos  int64
+}
+
+func (s *scanner) Read(b []byte) (int, error) {
+	n, err := s.br.Read(b)
+	s.pos += int64(n)
+
+	return n, err
+}
+
+func (s *scanner) discard(n int) error {
+	d, err := s.br.Discard(n)
+	s.pos += int64(d)
+
+	return err
+}
+
+// seekMagic advances to the next packet magic. It returns false at EOF.
+func (s *scanner) seekMagic() (bool, error) {
 	for {
-		b, err := br.Peek(len(magic))
+		b, err := s.br.Peek(len(magic))
 		if errors.Is(err, io.EOF) {
 			return false, nil
 		}
@@ -159,7 +219,7 @@ func seekMagic(br *bufio.Reader) (bool, error) {
 			i = len(b) - 1
 		}
 
-		if _, err := br.Discard(i + 1); err != nil {
+		if err := s.discard(i + 1); err != nil {
 			return false, err
 		}
 	}
@@ -167,11 +227,11 @@ func seekMagic(br *bufio.Reader) (bool, error) {
 
 // packet reads one packet starting at the magic. A packet that fails its
 // checks is skipped by advancing past the magic, so the scan resyncs.
-func (p *Parser) packet(br *bufio.Reader) error {
-	hdr, err := br.Peek(headerSize)
+func (p *Parser) packet(sc *scanner) error {
+	hdr, err := sc.br.Peek(headerSize)
 	if err != nil {
 		// Truncated header at the end of the file.
-		_, _ = br.Discard(len(magic))
+		_ = sc.discard(len(magic))
 		return nil
 	}
 
@@ -193,22 +253,21 @@ func (p *Parser) packet(br *bufio.Reader) error {
 	}
 
 	if length < headerSize || length%4 != 0 || length > limit {
-		_, err := br.Discard(len(magic))
-		return err
+		return sc.discard(len(magic))
 	}
 
 	bodyLen := int64(length - headerSize)
 
 	if ptype == typeRecv {
-		return p.recovery(br, sum, set, bodyLen)
+		return p.recovery(sc, sum, set, bodyLen)
 	}
 
-	if _, err := br.Discard(headerSize); err != nil {
+	if err := sc.discard(headerSize); err != nil {
 		return err
 	}
 
 	body := make([]byte, bodyLen)
-	if _, err := io.ReadFull(br, body); err != nil {
+	if _, err := io.ReadFull(sc, body); err != nil {
 		return nil //nolint:nilerr // truncated final packet: ignore it.
 	}
 
@@ -227,14 +286,13 @@ func (p *Parser) packet(br *bufio.Reader) error {
 }
 
 // recovery checks a recovery slice's MD5 while discarding its data, and
-// records its exponent.
-func (p *Parser) recovery(br *bufio.Reader, sum [16]byte, set ID, bodyLen int64) error {
+// records its exponent and where its data lies.
+func (p *Parser) recovery(sc *scanner, sum [16]byte, set ID, bodyLen int64) error {
 	if bodyLen < 4 {
-		_, err := br.Discard(len(magic))
-		return err
+		return sc.discard(len(magic))
 	}
 
-	if _, err := br.Discard(headerSize); err != nil {
+	if err := sc.discard(headerSize); err != nil {
 		return err
 	}
 
@@ -243,18 +301,31 @@ func (p *Parser) recovery(br *bufio.Reader, sum [16]byte, set ID, bodyLen int64)
 	h.Write(typeRecv[:])
 
 	var exp [4]byte
-	if _, err := io.ReadFull(br, exp[:]); err != nil {
+	if _, err := io.ReadFull(sc, exp[:]); err != nil {
 		return nil //nolint:nilerr // truncated final packet
 	}
 
 	h.Write(exp[:])
+	offset := sc.pos
 
-	if _, err := io.CopyN(h, br, bodyLen-4); err != nil {
+	if _, err := io.CopyN(h, sc, bodyLen-4); err != nil {
 		return nil //nolint:nilerr // truncated final packet
 	}
 
-	if bytes.Equal(h.Sum(nil), sum[:]) {
-		p.get(set).exponents[binary.LittleEndian.Uint32(exp[:])] = true
+	if !bytes.Equal(h.Sum(nil), sum[:]) {
+		return nil
+	}
+
+	s := p.get(set)
+	e := binary.LittleEndian.Uint32(exp[:])
+	s.exponents[e] = true
+
+	// Only 65535 exponents are distinct, so more records are padding.
+	if sc.name != "" && len(s.recovery) < maxRecoveryRecords {
+		s.recovery = append(s.recovery, located{
+			RecoverySlice: RecoverySlice{Exponent: e, Source: sc.name, Offset: offset},
+			length:        bodyLen - 4,
+		})
 	}
 
 	return nil
@@ -284,8 +355,11 @@ func (p *Parser) apply(set ID, ptype [16]byte, body []byte) {
 			p.order = append(p.order, set)
 		}
 	case typeFileDesc:
-		if f, ok := parseFileDesc(body); ok {
-			p.get(set).descs[f.ID] = f
+		// Volumes repeat the descriptions; keep the first so a File stays
+		// the same value across calls to Set.
+		f, ok := parseFileDesc(body)
+		if s := p.get(set); ok && s.descs[f.ID] == nil {
+			s.descs[f.ID] = f
 		}
 	case typeIFSC:
 		if len(body) < 16 || (len(body)-16)%20 != 0 {
@@ -338,7 +412,8 @@ func parseFileDesc(body []byte) (*File, bool) {
 	return f, bytes.Equal(h.Sum(nil), f.ID[:])
 }
 
-// Set returns the first complete recovery set read.
+// Set returns the first complete recovery set read. It can be called again
+// after reading more files; the Files it returns stay the same values.
 func (p *Parser) Set() (*Set, error) {
 	if len(p.order) == 0 {
 		return nil, ErrNoRecoverySet
@@ -360,6 +435,7 @@ func (p *Parser) Set() (*Set, error) {
 	}
 
 	out := &Set{ID: id, SliceSize: int64(sliceSize), RecoveryExponents: s.exponents, Creator: s.creator}
+	inputs := 0
 
 	for i := 0; i+16 <= len(ids); i += 16 {
 		var fid ID
@@ -377,12 +453,39 @@ func (p *Parser) Set() (*Set, error) {
 
 		if i/16 < int(count) {
 			out.Files = append(out.Files, f)
+			inputs += f.SliceCount(out.SliceSize)
 		} else {
 			out.Unprotected = append(out.Unprotected, f)
 		}
+
+		// Checked as we go so a huge declared size cannot overflow the sum.
+		if inputs > maxInputSlices {
+			return nil, fmt.Errorf("%w: more than %d", ErrTooManySlices, maxInputSlices)
+		}
 	}
 
+	out.Recovery = recoverySlices(s.recovery, out.SliceSize)
+
 	return out, nil
+}
+
+// recoverySlices keeps one usable location per exponent, the first read.
+func recoverySlices(all []located, sliceSize int64) []RecoverySlice {
+	var out []RecoverySlice
+
+	seen := map[uint32]bool{}
+	for _, l := range all {
+		if l.length != sliceSize || seen[l.Exponent] {
+			continue
+		}
+
+		seen[l.Exponent] = true
+		out = append(out, l.RecoverySlice)
+	}
+
+	slices.SortFunc(out, func(a, b RecoverySlice) int { return cmp.Compare(a.Exponent, b.Exponent) })
+
+	return out
 }
 
 var volumeName = regexp.MustCompile(`(?i)\.vol(\d+)\+(\d+)\.par2$`)
