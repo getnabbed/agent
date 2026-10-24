@@ -1,7 +1,7 @@
 // Package postproc turns what an engine downloaded into complete files:
-// PAR2 verification and name restoration now, repair and extraction later
-// (design 0005). It works only inside the job's work directory, through
-// os.Root.
+// PAR2 verification and name restoration, then RAR, 7z and ZIP extraction
+// (design 0005). PAR2 repair is not implemented yet. It works only inside
+// the job's work directory, through os.Root.
 package postproc
 
 import (
@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -25,14 +26,24 @@ import (
 // maxIndexBytes bounds one PAR2 index file. Real ones are kilobytes.
 const maxIndexBytes = 32 << 20
 
-// Assembler verifies downloads against their PAR2 recovery set and restores
-// obfuscated file names. It implements download.Assembler.
+// Assembler verifies downloads against their PAR2 recovery set, restores
+// obfuscated file names, extracts RAR, 7z and ZIP archives into
+// extracted/, and then deletes the archives and PAR2 files. It implements
+// download.Assembler.
 type Assembler struct {
 	Log *slog.Logger
+	// MaxEntries caps files and directories per job's archives; 0 means
+	// 10000.
+	MaxEntries int
+	// Slack is how far archive output may exceed twice the downloaded size;
+	// 0 means 1 GiB. Releases are mostly stored uncompressed, so more than
+	// that is a decompression bomb.
+	Slack int64
 }
 
 // Assemble implements download.Assembler. It can run again on its own
-// output: files already renamed are found under their new names.
+// output: files already renamed are found under their new names, and a
+// finished extraction is not repeated.
 func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Result) (*engine.Result, error) {
 	log := a.Log
 	if log == nil {
@@ -48,16 +59,21 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 
 	defer func() { _ = root.Close() }()
 
+	if m, ok := readMarker(root); ok {
+		return finish(root, m, log), nil
+	}
+
 	files, err := listFiles(root, res)
 	if err != nil {
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "list files: %v", err)
 	}
 
-	var index, data []string
+	var index, volumes, data []string
 	for _, f := range files {
 		switch {
 		case par2.IsVolume(f):
 			// Recovery volumes are only fetched for repair.
+			volumes = append(volumes, f)
 		case strings.EqualFold(path.Ext(f), ".par2"):
 			index = append(index, f)
 		default:
@@ -65,14 +81,25 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 		}
 	}
 
+	par2Files := slices.Concat(index, volumes)
+
 	if len(index) == 0 {
-		return a.withoutPar2(res)
+		if err := withoutPar2(res); err != nil {
+			return nil, err
+		}
+
+		return a.unpack(ctx, root, files, par2Files, log)
 	}
 
 	set, err := readSet(root, index)
 	if err != nil {
 		log.Warn("cannot read PAR2 index", "err", err)
-		return a.withoutPar2(res)
+
+		if err := withoutPar2(res); err != nil {
+			return nil, err
+		}
+
+		return a.unpack(ctx, root, files, par2Files, log)
 	}
 
 	dir := path.Dir(index[0])
@@ -100,25 +127,18 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 
 	renamed := a.restoreNames(root, rep, targets, log)
 
-	out := &engine.Result{MissingArticles: res.MissingArticles, Deferred: res.Deferred}
+	current := make([]string, 0, len(files))
 	for _, f := range files {
 		if to, ok := renamed[f]; ok {
 			f = to
 		}
 
-		fi, err := root.Stat(f)
-		if err != nil {
-			continue
-		}
-
-		out.Files = append(out.Files, engine.File{Path: f, Size: fi.Size()})
+		current = append(current, f)
 	}
-
-	slices.SortFunc(out.Files, func(a, b engine.File) int { return strings.Compare(a.Path, b.Path) })
 
 	if rep.Complete() {
 		log.Info("par2 verification passed", "files", len(rep.Files), "renamed", len(renamed))
-		return out, nil
+		return a.unpack(ctx, root, current, par2Files, log)
 	}
 
 	available := len(set.RecoveryExponents)
@@ -153,15 +173,15 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 		damaged, missing, rep.Needed, available)
 }
 
-// withoutPar2 decides a release that has no usable PAR2 index: it passes
-// unchanged when nothing is missing.
-func (a *Assembler) withoutPar2(res *engine.Result) (*engine.Result, error) {
+// withoutPar2 decides a release that has no usable PAR2 index: it can
+// only pass when nothing is missing.
+func withoutPar2(res *engine.Result) error {
 	if res.MissingArticles > 0 {
-		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_INCOMPLETE, false,
+		return engine.Fail(pb.FailureClass_FAILURE_CLASS_INCOMPLETE, false,
 			"%d articles missing and the release has no usable PAR2 files to repair them", res.MissingArticles)
 	}
 
-	return nil, nil
+	return nil
 }
 
 // restoreNames renames files found under another name to their recovery-set
@@ -198,7 +218,7 @@ func (a *Assembler) restoreNames(root *os.Root, rep *par2.Report, targets map[*p
 func listFiles(root *os.Root, res *engine.Result) ([]string, error) {
 	dirs := map[string]bool{}
 	for _, f := range res.Files {
-		dirs[path.Dir(f.Path)] = true
+		dirs[path.Dir(filepath.ToSlash(f.Path))] = true
 	}
 
 	var out []string

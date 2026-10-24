@@ -1,7 +1,7 @@
 # 0005: Usenet pipeline
 
-- **Status:** Accepted, 2026-10-24. Connection pool and PAR2 verification
-  implemented; repair and extraction are planned.
+- **Status:** Accepted, 2026-10-24. Connection pool, PAR2 verification,
+  extraction and clean-up implemented; repair is planned.
 - **Scope:** How the agent turns an NZB into verified, extracted files:
   NNTP, yEnc, PAR2 and archive extraction. Import into the library is
   separate.
@@ -40,10 +40,38 @@ out the fastest usenet libraries. Each stage was checked in October 2026.
    - No usable PAR2 and missing articles: `INCOMPLETE`, not retryable.
 3. **Repair.** Only when verification finds damage: fetch just enough
    recovery volumes (deferred at download time) and repair over GF(2¹⁶).
-4. **Extract.** RAR, 7z or ZIP, into the work directory only, with caps on
-   dictionary size, total output and file count against archive bombs.
-5. **Clean up.** Remove archives and PAR2 files, then hand the result to
-   import.
+4. **Extract (done).** RAR (single and multi-volume, `.partN.rar` and
+   `.rNN` naming), 7z (including `.7z.001` splits) and ZIP, into
+   `extracted/` in the work directory. Torrents go through the same step.
+   - **Finding archives.** By name: the first volume of each set, confirmed
+     by its signature. A file whose contents don't match its extension is
+     left alone. Archives inside archives are not extracted.
+   - **Paths.** Every entry is written through `os.Root`. Each path
+     component is sanitised like an NZB name, `..` entries are skipped, and
+     names that collide (including by case only) get a numbered suffix.
+     Links and other non-regular entries are never created.
+   - **Limits against bombs.**
+     - Output may not exceed twice the downloaded size plus 1 GiB.
+     - At most 10,000 entries per job.
+     - Decoders may use at most 1 GiB of dictionary or model memory. RAR
+       passes this to rardecode. For 7z the agent replaces the library's
+       LZMA, LZMA2 and PPMd decoders with ones that check first, because the
+       library allocates whatever the archive declares, up to 4 GiB. Zstd,
+       Brotli and LZ4, which only third-party 7-Zip builds write, are
+       refused.
+   - **Failures.** Password protection, missing volumes, bad checksums and
+     exceeded limits fail `EXTRACT` and are not retryable, so the cloud
+     picks another release. Write errors fail `DISK` and are retryable.
+5. **Clean up (done).** After a successful extraction, the archive volumes
+   and PAR2 files are deleted. The result handed to import lists the
+   extracted files plus any downloaded files that were neither archives
+   nor PAR2 (an `.nfo`, a sample). `extract.json` in the work directory
+   records the outcome before anything is deleted, so a restart during
+   clean-up finishes it instead of looking for archives that are gone.
+
+Extraction needs free space for a second copy of the release until clean-up
+runs. Deleting each RAR volume as soon as it has been read would avoid
+that, but it would make a failed extraction impossible to retry.
 
 An early availability check (`STAT` on a sample of articles before
 downloading) waits for stage 2. It is only useful once the agent knows how
@@ -87,5 +115,5 @@ nntps://user:pass@news.example.com:563?connections=20
 nntps://user:pass@block.example.net:563?connections=8&backup=true
 ```
 
-`Engine.SetProvider` and `RemoveProvider` are the hooks `PutSource` and
-`RemoveSource` will call.
+`PutSource` and `RemoveSource` (design 0006) call `Engine.SetProvider` and
+`RemoveProvider`.

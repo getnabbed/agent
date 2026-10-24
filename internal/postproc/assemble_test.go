@@ -77,8 +77,8 @@ func TestRestoresObfuscatedNames(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := paths(out); got != "data/movie.mkv,data/movie.nfo,data/release.par2" {
-		t.Fatalf("got files %s, want the real names", got)
+	if got := paths(out); got != "data/movie.mkv,data/movie.nfo" {
+		t.Fatalf("got files %s, want the real names and the par2 index removed", got)
 	}
 
 	got, err := os.ReadFile(filepath.Join(j.Dir, "data", "movie.mkv"))
@@ -140,12 +140,10 @@ func TestUnrepairableDamageFailsForGood(t *testing.T) {
 }
 
 func TestWithoutPar2(t *testing.T) {
-	dir := t.TempDir()
-	res := &engine.Result{Files: []engine.File{{Path: "data/a.mkv", Size: 1}}}
-	j := engine.Job{ID: "d", Dir: dir}
+	j, res := workDir(t, map[string][]byte{"a.mkv": []byte("x")})
 
-	if out, err := assemble(j, res); err != nil || out != nil {
-		t.Fatalf("got %v, %v; want a pass with the result unchanged", out, err)
+	if out, err := assemble(j, res); err != nil || paths(out) != "data/a.mkv" {
+		t.Fatalf("got %s, %v; want a pass with the same file", paths(out), err)
 	}
 
 	res.MissingArticles = 3
