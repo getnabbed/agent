@@ -1,0 +1,37 @@
+# Claims the chart creates: a static PV for an existing NFS folder (the
+# library), and a provisioned claim for downloads.
+replicas: 2
+config:
+  api_url: https://api.nabbed.example
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+volumes:
+  movies:
+    mountPath: /media/movies
+    libraryRoots: ["."]
+    claim:
+      storageClassName: nfs-csi
+      size: 300Gi
+      persistentVolume:
+        csi:
+          driver: nfs.csi.k8s.io
+          volumeAttributes:
+            server: 192.0.2.10
+            share: /mnt/media
+            subDir: movies
+        mountOptions:
+          - nfsvers=4.1
+  scratch:
+    mountPath: /scratch
+    claim:
+      storageClassName: nfs-csi
+      size: 200Gi
+      keep: false
+downloads:
+  volume: scratch

@@ -121,7 +121,22 @@ Checks the values once, so every template can rely on them.
 {{- end }}
 {{- $src := omit $v "mountPath" "readOnly" "libraryRoots" }}
 {{- if ne (len $src) 1 }}
-{{- fail (printf "volumes.%s needs exactly one volume source such as nfs or persistentVolumeClaim, got %v" $name (keys $src | sortAlpha)) }}
+{{- fail (printf "volumes.%s needs exactly one of claim or a volume source such as nfs or persistentVolumeClaim, got %v" $name (keys $src | sortAlpha)) }}
+{{- end }}
+{{- with $v.claim }}
+{{- if not .size }}
+{{- fail (printf "volumes.%s.claim.size is required" $name) }}
+{{- end }}
+{{- $modes := default (list "ReadWriteMany") .accessModes }}
+{{- if and (gt (int $.Values.replicas) 1) (not (or (has "ReadWriteMany" $modes) (has "ReadOnlyMany" $modes))) }}
+{{- fail (printf "volumes.%s.claim: replicas share this claim, so accessModes needs ReadWriteMany or ReadOnlyMany" $name) }}
+{{- end }}
+{{- with .persistentVolume }}
+{{- $pvSrc := omit . "mountOptions" }}
+{{- if ne (len $pvSrc) 1 }}
+{{- fail (printf "volumes.%s.claim.persistentVolume needs exactly one volume source such as csi or nfs, got %v" $name (keys $pvSrc | sortAlpha)) }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- range $v.libraryRoots }}
 {{- if or (isAbs .) (has ".." (splitList "/" .)) }}
@@ -277,5 +292,59 @@ Config, CA and secret mounts shared by the agent and the config test.
     items:
       - key: {{ .Values.usenet.secretKey }}
         path: nntp
+{{- end }}
+{{- end }}
+
+{{/*
+Names of the claim and static PersistentVolume the chart creates for a
+volumes entry. PersistentVolumes are cluster-wide, so theirs carries the
+namespace.
+*/}}
+{{- define "nabbed-agent.claimName" -}}
+{{- printf "%s-%s" (include "nabbed-agent.fullname" .root) .name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "nabbed-agent.pvName" -}}
+{{- printf "%s-%s-%s" .root.Release.Namespace (include "nabbed-agent.fullname" .root) .name | trunc 253 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+The pod's volume source for a volumes entry: the chart's claim, or the
+source given verbatim.
+*/}}
+{{- define "nabbed-agent.volumeSource" -}}
+{{- if .v.claim -}}
+persistentVolumeClaim:
+  claimName: {{ include "nabbed-agent.claimName" . }}
+  {{- if .v.readOnly }}
+  readOnly: true
+  {{- end }}
+{{- else }}
+{{- toYaml (omit .v "mountPath" "readOnly" "libraryRoots") }}
+{{- end }}
+{{- end }}
+
+{{/*
+The CSI driver behind a volumes entry that holds existing files: the
+chart's static PersistentVolume, the volume bound to an existing claim,
+or an inline CSI volume. A newly provisioned claim is empty, so it has
+nothing to re-permission. Empty when unknown,
+including under helm template, where lookup finds nothing.
+*/}}
+{{- define "nabbed-agent.csiDriver" -}}
+{{- $v := .v }}
+{{- $root := .root }}
+{{- if .v.claim -}}
+{{- if and $v.claim.persistentVolume $v.claim.persistentVolume.csi }}
+{{- $v.claim.persistentVolume.csi.driver }}
+{{- end }}
+{{- else if $v.persistentVolumeClaim }}
+{{- $pvc := lookup "v1" "PersistentVolumeClaim" $root.Release.Namespace $v.persistentVolumeClaim.claimName }}
+{{- with $pvc }}
+{{- $pv := lookup "v1" "PersistentVolume" "" .spec.volumeName }}
+{{- with $pv }}{{ with .spec.csi }}{{ .driver }}{{ end }}{{ end }}
+{{- end }}
+{{- else if $v.csi }}
+{{- $v.csi.driver }}
 {{- end }}
 {{- end }}
