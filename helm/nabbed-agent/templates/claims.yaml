@@ -1,0 +1,91 @@
+{{- /*
+Claims for volumes entries with claim.create (the default), shared by
+every replica. With claim.persistentVolume the chart also creates the
+PersistentVolume the claim binds to, for an existing folder such as a NAS
+share's movies/. Without it, the storage class provisions a new, empty
+volume. Entries with create: false mount an existing claim and render
+nothing here.
+*/ -}}
+{{- range $name, $v := .Values.volumes }}
+{{- if and $v.claim (include "nabbed-agent.claimCreate" $v.claim) }}
+{{- with $v.claim }}
+{{- $ctx := dict "root" $ "name" $name "v" $v }}
+{{- $claimName := include "nabbed-agent.claimName" $ctx }}
+{{- $pvName := include "nabbed-agent.pvName" $ctx }}
+{{- $modes := default (list "ReadWriteMany") .accessModes }}
+{{- $keep := ne (toString .keep) "false" }}
+{{- with .persistentVolume }}
+---
+# Always Retain: deleting this object or the claim never touches the
+# files on the volume.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $pvName }}
+  labels:
+    {{- include "nabbed-agent.labels" $ | nindent 4 }}
+  {{- if $keep }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
+spec:
+  capacity:
+    storage: {{ $v.claim.size }}
+  accessModes:
+    {{- toYaml $modes | nindent 4 }}
+  volumeMode: Filesystem
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: {{ default "" $v.claim.storageClassName | quote }}
+  # Reserved for the chart's claim, so no other claim can bind it.
+  claimRef:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    namespace: {{ $.Release.Namespace }}
+    name: {{ $claimName }}
+  {{- with .mountOptions }}
+  mountOptions:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- $src := deepCopy (omit . "mountOptions") }}
+  {{- with $src.csi }}
+  {{- if not .volumeHandle }}
+  {{- /* CSI needs a handle that is unique in the cluster. */ -}}
+  {{- $_ := set . "volumeHandle" $pvName }}
+  {{- end }}
+  {{- end }}
+  {{- toYaml $src | nindent 2 }}
+{{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $claimName }}
+  labels:
+    {{- include "nabbed-agent.labels" $ | nindent 4 }}
+  {{- if or $keep .annotations }}
+  annotations:
+    {{- if $keep }}
+    # Kept on helm uninstall, so a storage class with reclaimPolicy
+    # Delete cannot take the files with it.
+    helm.sh/resource-policy: keep
+    {{- end }}
+    {{- with .annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml $modes | nindent 4 }}
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: {{ .size }}
+  {{- if .persistentVolume }}
+  storageClassName: {{ default "" .storageClassName | quote }}
+  volumeName: {{ $pvName }}
+  {{- else if .storageClassName }}
+  storageClassName: {{ .storageClassName }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

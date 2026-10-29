@@ -99,25 +99,65 @@ downloads:
   annotations: {}
 
 # Shared folders mounted into every agent, usually your media library on
-# NFS. Each entry is a Kubernetes volume source (nfs, persistentVolumeClaim,
-# hostPath, csi, ...) plus:
+# NFS. Each entry has:
 #
 #   mountPath:    where it appears in the container (required)
 #   readOnly:     mount read-only (default false)
 #   libraryRoots: folders under mountPath the web app may import into,
-#                 added to library.allowed_roots. Without any, the web app
-#                 can import nowhere.
+#                 added to library.allowed_roots ("." for mountPath
+#                 itself). Without any, the web app can import nowhere.
 #
-# NFS ignores fsGroup: the export must be writable by the agent's uid
-# (65532 by default), or set podSecurityContext.runAsUser and runAsGroup
-# to the export's owner.
+# and exactly one of claim or source.
+#
+#   claim:
+#     create: true        the chart creates the claim (the default)
+#       name:             default <fullname>-<entry>
+#       size:             required
+#       storageClassName: for example nfs-csi
+#       accessModes:      default [ReadWriteMany], since replicas share it
+#       annotations:      added to the claim
+#       keep:             keep the claim and its volume on helm uninstall
+#                         (default true)
+#       persistentVolume: bind to an existing folder through a static
+#                         PersistentVolume the chart creates, always with
+#                         reclaim policy Retain: a volume source (csi,
+#                         nfs) plus mountOptions. A csi volumeHandle
+#                         defaults to the volume's name. Without it, the
+#                         storage class provisions a new, empty volume.
+#     create: false       mount an existing claim
+#       name:             required, in the release's namespace
+#
+#   source:               any Kubernetes volume source, used as is (nfs,
+#                         hostPath, csi, ...)
+#
+# Files are written as the agent's uid (podSecurityContext.runAsUser): set
+# it to the owner your media server expects. CSI drivers with
+# fsGroupPolicy File (csi-driver-nfs among them) apply fsGroup to the
+# volume, re-permissioning every file on it unless its root already has
+# that group, group read-write and setgid. NOTES.txt warns when this
+# applies. The built-in nfs source ignores fsGroup.
 volumes: {}
-#  media:
-#    mountPath: /media
-#    libraryRoots: [movies, tv]
-#    nfs:
-#      server: nas.lan
-#      path: /export/media
+#  movies:
+#    mountPath: /media/movies
+#    libraryRoots: ["."]
+#    claim:
+#      create: true
+#      storageClassName: nfs-csi
+#      size: 300Gi
+#      persistentVolume:
+#        csi:
+#          driver: nfs.csi.k8s.io
+#          volumeAttributes:
+#            server: nas.lan
+#            share: /export/media
+#            subDir: movies
+#        mountOptions: [nfsvers=4.1]
+#  tv:
+#    mountPath: /media/tv
+#    libraryRoots: ["."]
+#    claim:
+#      create: false
+#      name: media-tv
 
 torrent:
   # Port BitTorrent listens on in every pod. Forwarding it improves speeds

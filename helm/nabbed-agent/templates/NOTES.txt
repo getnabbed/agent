@@ -33,3 +33,21 @@ Library folders the web app may import into:
 No library folders are allowed, so imports will be refused. Mount your
 library with volumes.<name>.libraryRoots, or set config.library.allowed_roots.
 {{- end }}
+{{- if .Values.podSecurityContext.fsGroup }}
+{{- range $name, $v := .Values.volumes }}
+{{- $driver := include "nabbed-agent.csiDriver" (dict "root" $ "v" $v) }}
+{{- if $driver }}
+{{- $policy := dig "spec" "fsGroupPolicy" "" (lookup "storage.k8s.io/v1" "CSIDriver" "" $driver) }}
+{{- if eq $policy "File" }}
+
+WARNING: volumes.{{ $name }} uses CSI driver {{ $driver }} with fsGroupPolicy
+File, so Kubernetes applies fsGroup {{ $.Values.podSecurityContext.fsGroup }} to it. Unless the root of that
+folder already has group {{ $.Values.podSecurityContext.fsGroup }}, group read-write and the setgid bit, the
+kubelet changes the group and permissions of every file on it when the
+pod starts. Prepare the folder once on the NAS:
+
+  chgrp {{ $.Values.podSecurityContext.fsGroup }} <folder> && chmod g+rws <folder>
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
