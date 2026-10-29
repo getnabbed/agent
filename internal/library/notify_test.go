@@ -36,8 +36,10 @@ func noticeState(t *testing.T, r *notice.Reporter, code, subject string) bool {
 	return open
 }
 
-// waitNotice waits until code+subject reaches want.
-func waitNotice(t *testing.T, r *notice.Reporter, code, subject string, want bool) {
+// waitNotice waits until code for root "movies" reaches want.
+func waitNotice(t *testing.T, r *notice.Reporter, code string, want bool) {
+	const subject = "movies"
+
 	t.Helper()
 
 	deadline := time.Now().Add(10 * time.Second)
@@ -130,8 +132,8 @@ func TestScanRaisesRootUnusable(t *testing.T) {
 		t.Fatalf("got a complete scan of a missing root, want incomplete")
 	}
 
-	waitNotice(t, n, notice.CodeLibraryRootUnusable, "movies", true)
-	waitNotice(t, n, notice.CodeLibraryScanIncomplete, "movies", true)
+	waitNotice(t, n, notice.CodeLibraryRootUnusable, true)
+	waitNotice(t, n, notice.CodeLibraryScanIncomplete, true)
 
 	if err := os.Rename(movies+".gone", movies); err != nil {
 		t.Fatal(err)
@@ -142,8 +144,8 @@ func TestScanRaisesRootUnusable(t *testing.T) {
 	}
 
 	reports(t, m, "s2")
-	waitNotice(t, n, notice.CodeLibraryRootUnusable, "movies", false)
-	waitNotice(t, n, notice.CodeLibraryScanIncomplete, "movies", false)
+	waitNotice(t, n, notice.CodeLibraryRootUnusable, false)
+	waitNotice(t, n, notice.CodeLibraryScanIncomplete, false)
 }
 
 func TestRemovingARootResolvesItsNotices(t *testing.T) {

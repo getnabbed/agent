@@ -23,7 +23,7 @@ type Notifier interface {
 // source id as subject, when a provider allows fewer connections than
 // configured, and resolve it once a pool for the source holds the
 // configured number or the source is removed. nil, the default, reports
-// none. Call it before adding providers.
+// none.
 func (e *Engine) SetNotifier(n Notifier) { e.notifier.Store(&n) }
 
 func (e *Engine) notifierOrNil() Notifier {
