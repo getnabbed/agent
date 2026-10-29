@@ -5,9 +5,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -244,19 +244,34 @@ func TestAPIHostIsLowercased(t *testing.T) {
 	}
 }
 
+// failingProtector stores plaintext like credstore.PlaintextProtector, but
+// fails every Protect while fail is set. It makes Save fail on every
+// platform: a read-only directory stops neither Windows nor root.
+type failingProtector struct {
+	credstore.PlaintextProtector
+
+	fail atomic.Bool
+}
+
+var errInjectedSave = errors.New("injected save failure")
+
+// Protect implements credstore.Protector.
+func (p *failingProtector) Protect(b []byte) ([]byte, error) {
+	if p.fail.Load() {
+		return nil, errInjectedSave
+	}
+
+	return p.PlaintextProtector.Protect(b)
+}
+
 // M6: if the rotated token cannot be saved, the new access token must not
 // be used, and the persisted intent must still allow an idempotent retry.
 func TestRotatedTokenIsNotUsedUntilSaved(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("a read-only directory does not stop root from writing")
-	}
-
 	f := newFakeAPI(t)
 	ts, store, _ := pairForTest(t, f)
 	first, _ := ts.Token(context.Background())
 	ts.Invalidate(first.Raw)
 
-	// Make the data dir read-only so Save fails after the server rotates.
 	creds, _ := store.Load()
 	pending := creds.Clone()
 	pending.PendingRefresh = &credstore.PendingRefresh{Nonce: "n1", RefreshToken: creds.RefreshToken, StartedAt: time.Now()}
@@ -264,24 +279,25 @@ func TestRotatedTokenIsNotUsedUntilSaved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ts = NewTokenSource(NewClient(f.url(), f.srv.Client(), "test"), store, mustIdentity(t, store), pending, nil, quiet)
-
-	if err := os.Chmod(store.Dir(), 0o500); err != nil {
+	// Reopen the store with a protector that makes Save fail after the
+	// server rotates.
+	prot := &failingProtector{}
+	failing, err := credstore.OpenWith(store.Dir(), prot, quiet)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	t.Cleanup(func() { _ = os.Chmod(store.Dir(), 0o700) })
+	ts = NewTokenSource(NewClient(f.url(), f.srv.Client(), "test"), failing, mustIdentity(t, store), pending, nil, quiet)
+	prot.fail.Store(true)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if _, err := ts.Token(ctx); err == nil {
-		t.Fatal("token returned although the rotated refresh token was not saved")
+	if _, err := ts.Token(ctx); !errors.Is(err, errInjectedSave) {
+		t.Fatalf("got Token error = %v, want %v: the rotated refresh token was not saved", err, errInjectedSave)
 	}
 
-	if err := os.Chmod(store.Dir(), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	prot.fail.Store(false)
 
 	// The retry replays the same nonce, the server answers idempotently,
 	// and the agent is not revoked.
