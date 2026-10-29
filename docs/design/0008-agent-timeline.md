@@ -159,6 +159,38 @@ proto.
 
 `SourceHealth` stays as it is; it already covers failing sources.
 
+As built (`internal/notice`):
+
+- **Subjects:** `subject_id` is empty for `agent.upgraded` and
+  `library.none_allowed`; a library root id for `library.root_unusable`,
+  `library.scan_incomplete` and `disk.low` on a root; a usenet source id
+  for `usenet.connections_capped`; the allowed folder's configured path for
+  `library.allowed_missing`; and the downloads folder's path for
+  `disk.low` on the downloads folder. The cloud keys open conditions on
+  agent, code and subject.
+  The downloads folder's path is the one host path outside library
+  roots the cloud now sees; allowed folders it already sees through
+  `BrowseFilesystem`.
+- **Upgrade:** `agent.upgraded` is an event, not a condition: it is sent
+  once, already resolved, with `from` and `to` attrs, and keeps no row in
+  `notices`. The version lives in store meta. The first run of a build
+  with this table only records the version.
+- **Rate limit:** a change over the limit isn't dropped. It stays in
+  `notices` and goes out within a minute of the budget allowing, folded
+  with later changes: raised then cleared while held back sends nothing.
+  The budget is rebuilt from the table on start, so restarts don't reset it.
+- **Same transaction:** `library.scan_incomplete` is raised or resolved in
+  the transaction that queues the scan's last `InventoryReport`, and
+  removing a root resolves its root notices with the removal. The others
+  come from checks, which use their own transaction.
+- **Checks:** allowed folders are checked at start and every minute.
+  `library.root_unusable` comes from a scan or import whose root fails the
+  policy or can't be written, and resolves on the next successful scan
+  or import of that root.
+- **Usenet cap:** `usenet.connections_capped` resolves once a pool for
+  the source holds the configured number of connections at once, or when
+  the source is removed. An open notice survives a restart until then.
+
 ### 3. Free disk space
 
 - **Telemetry:** implement `HostStats.disk_free` for each library root and
@@ -170,6 +202,16 @@ proto.
   same check every 60 s.
 - **Platform code:** split as `diskfree_unix.go` (`unix.Statfs`) and
   `diskfree_windows.go` (`GetDiskFreeSpaceEx`).
+- **As built** (`internal/hoststats`): free space is what the agent's user
+  may write (`f_bavail`, or the caller's quota on Windows), and GB are
+  decimal. Between the raise and clear thresholds a notice keeps its
+  state. Telemetry goes under key `host_stats`, starting as soon as the
+  setting is turned on; `cpu_percent` and `mem_used_bytes` stay unset.
+- **SetAgentSettings:** `host_stats` is stored in store meta with the
+  command's result, so it survives restarts. A command that also sets
+  `max_concurrent` or `max_bps` (non-zero; proto3 can't tell zero from
+  unset) answers `APPLIED_CAPPED`, not `REJECTED`: the flag did take
+  effect, and the message says the local limits stay in effect.
 
 ## Cloud side, for agreement
 

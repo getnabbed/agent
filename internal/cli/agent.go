@@ -17,10 +17,12 @@ import (
 	"github.com/getnabbed/agent/internal/command"
 	"github.com/getnabbed/agent/internal/config"
 	"github.com/getnabbed/agent/internal/credstore"
+	"github.com/getnabbed/agent/internal/hoststats"
 	"github.com/getnabbed/agent/internal/identity"
 	"github.com/getnabbed/agent/internal/library"
 	"github.com/getnabbed/agent/internal/link"
 	"github.com/getnabbed/agent/internal/lock"
+	"github.com/getnabbed/agent/internal/notice"
 	"github.com/getnabbed/agent/internal/source"
 	statestore "github.com/getnabbed/agent/internal/store"
 	"github.com/getnabbed/agent/internal/tlsconf"
@@ -263,11 +265,23 @@ func runRun(ctx context.Context, e *env, args []string) int {
 
 	defer func() { _ = state.Close() }()
 
+	notices, err := notice.New(ctx, notice.Config{Store: state, Log: e.log})
+	if err != nil {
+		e.log.Error("notice setup failed", "err", err)
+		return ExitError
+	}
+
+	if err := notices.Upgraded(ctx, version.Version); err != nil {
+		e.log.Warn("record agent version", "err", err)
+	}
+
 	lib, err := newLibrary(e, state)
 	if err != nil {
 		e.log.Error("library setup failed", "err", err)
 		return ExitError
 	}
+
+	lib.SetNotifier(notices)
 
 	downloads, nntp, closeEngines, err := newDownloads(e, rf, state, api, hc, tokens, &library.Importer{Library: lib, Log: e.log})
 	if err != nil {
@@ -277,13 +291,21 @@ func runRun(ctx context.Context, e *env, args []string) int {
 
 	defer closeEngines()
 
+	nntp.SetNotifier(notices)
+
+	disks, err := hoststats.New(ctx, hoststats.Config{Store: state, DownloadsDir: rf.downloadDir, Roots: lib, Notifier: notices, Log: e.log})
+	if err != nil {
+		e.log.Error("host stats setup failed", "err", err)
+		return ExitError
+	}
+
 	sources := source.New(source.Config{Store: state, Key: id.SealPrivate(), Engine: nntp, Log: e.log})
 	if err := sources.Load(ctx); err != nil {
 		e.log.Error("cannot load download sources", "err", err)
 		return ExitError
 	}
 
-	applier := command.New(command.Config{Store: state, Clock: clk, Downloads: downloads, Sources: sources, Library: lib, Log: e.log})
+	applier := command.New(command.Config{Store: state, Clock: clk, Downloads: downloads, Sources: sources, Library: lib, Settings: disks, Log: e.log})
 	applier.Prune(ctx)
 
 	lc, err := link.New(link.Config{
@@ -309,6 +331,7 @@ func runRun(ctx context.Context, e *env, args []string) int {
 	defer func() { _ = lc.Close() }()
 
 	downloads.SetTelemetry(lc)
+	disks.SetTelemetry(lc)
 
 	e.log.Info("agent starting", "agent_id", creds.AgentID, "gateway", creds.GatewayURL,
 		"instance_id", lc.InstanceID(), "capabilities", downloads.Capabilities())
@@ -341,6 +364,26 @@ func runRun(ctx context.Context, e *env, args []string) int {
 		}
 	}()
 
+	// Sends notices the rate limit held back, checks the allowed library
+	// folders and measures free space, raising notices as conditions change.
+	noticeDone := make(chan struct{})
+	go func() {
+		defer close(noticeDone)
+		_ = notices.Run(runCtx)
+	}()
+
+	foldersDone := make(chan struct{})
+	go func() {
+		defer close(foldersDone)
+		_ = lib.WatchFolders(runCtx, time.Minute)
+	}()
+
+	disksDone := make(chan struct{})
+	go func() {
+		defer close(disksDone)
+		_ = disks.Run(runCtx)
+	}()
+
 	// Housekeeping, so a long-running agent's database stays bounded.
 	go maintain(runCtx, time.Hour, func(ctx context.Context) {
 		applier.Prune(ctx)
@@ -352,6 +395,9 @@ func runRun(ctx context.Context, e *env, args []string) int {
 	<-dlDone
 	<-srcDone
 	<-libDone
+	<-noticeDone
+	<-foldersDone
+	<-disksDone
 
 	switch {
 	case err == nil:

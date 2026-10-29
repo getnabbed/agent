@@ -214,8 +214,13 @@ func (m *Manager) scan(ctx context.Context, rootID, scanID string) {
 		return
 	case err != nil:
 		log.Warn("scan library root", "err", err)
+		m.RootFailed(ctx, rootID, err)
 
 		incomplete = true
+	}
+
+	if err == nil {
+		m.RootUsed(ctx, rootID)
 	}
 
 	if err := rep.finish(ctx, incomplete); err != nil {
@@ -301,6 +306,8 @@ func (r *reporter) send(ctx context.Context, last, incomplete bool) error {
 		}
 
 		if last {
+			r.m.scanFinishedTx(ctx, tx, r.rootID, incomplete)
+
 			if _, err := tx.ExecContext(ctx, "DELETE FROM library_scans WHERE root_id = ?", r.rootID); err != nil {
 				return fmt.Errorf("finish scan: %w", err)
 			}
