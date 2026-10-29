@@ -105,8 +105,7 @@ spec:
         {{- include "nabbed-agent.configVolumes" . | nindent 8 }}
         {{- range $name, $v := .Values.volumes }}
         - name: vol-{{ $name }}
-          {{- $src := omit $v "mountPath" "readOnly" "libraryRoots" }}
-          {{- toYaml $src | nindent 10 }}
+          {{- include "nabbed-agent.volumeSource" (dict "root" $ "name" $name "v" $v) | nindent 10 }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

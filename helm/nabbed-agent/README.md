@@ -118,28 +118,45 @@ Use `extraEnv` for anything else, such as `NABBED_LOG_LEVEL=debug`.
 
 ### Shared folders (NFS)
 
-`volumes` mounts folders into every agent. Each entry takes a Kubernetes
-volume source plus `mountPath`, `readOnly` and `libraryRoots`. The library
-roots are added to `library.allowed_roots`, which controls where the web
-app may import:
+`volumes` mounts folders into every agent. Each entry has a `mountPath`,
+optionally `readOnly`, and `libraryRoots`, the folders under `mountPath`
+the web app may import into. They are added to `library.allowed_roots`.
+
+The usual setup is a claim the chart creates, bound to an existing folder
+on your NAS through a static PersistentVolume:
 
 ```yaml
 volumes:
-  media:
-    mountPath: /media
-    libraryRoots: [movies, tv]     # allows /media/movies and /media/tv
-    nfs:
-      server: nas.lan
-      path: /export/media
+  movies:
+    mountPath: /media/movies
+    libraryRoots: ["."]            # allows /media/movies itself
+    claim:
+      storageClassName: nfs-csi
+      size: 300Gi
+      persistentVolume:
+        csi:
+          driver: nfs.csi.k8s.io
+          volumeAttributes:
+            server: nas.lan
+            share: /export/media
+            subDir: movies
+        mountOptions: [nfsvers=4.1]
 ```
 
-Any other source works the same way, for example
-`persistentVolumeClaim: {claimName: media}` for an existing ReadWriteMany
-claim, `hostPath` or `csi`.
+The volume always has reclaim policy `Retain`, so deleting it or the claim
+never touches the files. The claim and volume survive `helm uninstall`
+(`claim.keep`, default true). Without `persistentVolume`, the storage class
+provisions a new, empty volume, which suits a shared downloads area.
 
-NFS ignores `fsGroup`, so the export must be writable by the agent's uid.
-Either give the export to uid 65532, or run the agent as the export's
-owner:
+An entry can instead hold any Kubernetes volume source, used as is:
+`persistentVolumeClaim` for an existing claim in the release's namespace,
+or `nfs`, `hostPath` or `csi`.
+
+### Ownership and fsGroup
+
+The agent writes files as `podSecurityContext.runAsUser`. Run it as the
+user your media server expects, so that it can rename and delete what the
+agent imports:
 
 ```yaml
 podSecurityContext:
@@ -150,6 +167,24 @@ podSecurityContext:
   fsGroupChangePolicy: OnRootMismatch
   seccompProfile: {type: RuntimeDefault}
 ```
+
+Set `fsGroup` explicitly when you override it. Helm merges your values with
+the defaults, so leaving the key out keeps `65532`.
+
+`fsGroup` makes the agent's own block-storage claims writable. CSI drivers
+with `fsGroupPolicy: File`, including csi-driver-nfs, apply it to NFS
+volumes too. Unless the folder's root already has that group, group
+read-write and the setgid bit, the kubelet then changes the group and
+permissions of every file on the volume when the pod starts. Check your
+driver and prepare the folder once on the NAS:
+
+```sh
+kubectl get csidriver nfs.csi.k8s.io -o jsonpath='{.spec.fsGroupPolicy}'
+chgrp 1000 /export/media/movies && chmod g+rws /export/media/movies
+```
+
+The install notes warn about each volume this applies to. The built-in
+`nfs` volume source ignores `fsGroup`.
 
 ### Downloads
 
