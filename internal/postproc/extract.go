@@ -76,7 +76,7 @@ type archive struct {
 }
 
 var (
-	reRarPart = regexp.MustCompile(`(?i)\.part0*(\d+)\.rar$`)
+	reRarPart = regexp.MustCompile(`(?i)\.part(\d+)\.rar$`)
 	reRar     = regexp.MustCompile(`(?i)\.rar$`)
 	re7zSplit = regexp.MustCompile(`(?i)\.7z\.(\d+)$`)
 	re7z      = regexp.MustCompile(`(?i)\.7z$`)
@@ -157,9 +157,12 @@ func hasMagic(root *os.Root, name string, k kind) bool {
 // extractor writes archive entries under extractDir within the limits of
 // one job.
 type extractor struct {
-	ctx     context.Context
-	root    *os.Root
-	log     *slog.Logger
+	ctx  context.Context
+	root *os.Root
+	log  *slog.Logger
+	// files are the job's data files, where multi-volume archives find
+	// their volumes.
+	files   []string
 	budget  int64
 	entries int
 	used    map[string]bool
@@ -337,8 +340,6 @@ func (a *Assembler) unpack(ctx context.Context, root *os.Root, job engine.Job, f
 		}
 	}
 
-	archives := findArchives(root, data, log)
-
 	var input int64
 	for _, f := range data {
 		if fi, err := root.Stat(f); err == nil {
@@ -350,6 +351,8 @@ func (a *Assembler) unpack(ctx context.Context, root *os.Root, job engine.Job, f
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "clear %s: %v", extractDir, err)
 	}
 
+	// Joining a split spends its size of the budget and extracting a
+	// joined archive about as much again, which 2×input covers.
 	x := &extractor{
 		ctx:     ctx,
 		root:    root,
@@ -359,7 +362,19 @@ func (a *Assembler) unpack(ctx context.Context, root *os.Root, job engine.Job, f
 		used:    map[string]bool{},
 	}
 
-	remove := slices.Clone(par2Files)
+	data, pieces, err := x.joinSplits(data)
+	if err != nil {
+		return nil, classifyJoin(ctx, err)
+	}
+
+	if len(pieces) > 0 {
+		job.Notes.Info("split.joined", fmt.Sprintf("Joined %d split pieces", len(pieces)), "pieces", len(pieces))
+	}
+
+	x.files = data
+	archives := findArchives(root, data, log)
+
+	remove := slices.Concat(par2Files, pieces)
 
 	for _, arc := range archives {
 		volumes, err := x.extract(arc)
@@ -447,13 +462,32 @@ func classify(ctx context.Context, arc archive, err error) error {
 		return engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "extract %s: %v", path.Base(arc.name), de.err)
 	case errors.Is(err, errEncrypted):
 		return engine.Fail(pb.FailureClass_FAILURE_CLASS_EXTRACT, false, "%s is password protected", path.Base(arc.name))
-	case errors.Is(err, errBudget), errors.Is(err, errEntries):
+	case errors.Is(err, errBudget), errors.Is(err, errEntries), errors.Is(err, errAmbiguousVolume):
 		return engine.Fail(pb.FailureClass_FAILURE_CLASS_EXTRACT, false, "%s: %v", path.Base(arc.name), err)
 	case errors.Is(err, fs.ErrNotExist):
 		return engine.Fail(pb.FailureClass_FAILURE_CLASS_EXTRACT, false, "%s: a volume is missing: %v", path.Base(arc.name), err)
 	}
 
 	return engine.Fail(pb.FailureClass_FAILURE_CLASS_EXTRACT, false, "%s is corrupt or unsupported: %v", path.Base(arc.name), err)
+}
+
+// classifyJoin turns a failure to join a raw split into the failure the
+// cloud sees. Like a broken archive, a damaged split is damaged for good.
+func classifyJoin(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	var de diskError
+	if errors.As(err, &de) {
+		return engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "join split file: %v", de.err)
+	}
+
+	if errors.Is(err, fs.ErrNotExist) {
+		return engine.Fail(pb.FailureClass_FAILURE_CLASS_EXTRACT, false, "split file has a missing piece: %v", err)
+	}
+
+	return engine.Fail(pb.FailureClass_FAILURE_CLASS_EXTRACT, false, "split file cannot be joined: %v", err)
 }
 
 func (a *Assembler) maxEntries() int {

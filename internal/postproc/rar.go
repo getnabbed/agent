@@ -3,16 +3,21 @@ package postproc
 import (
 	"errors"
 	"io"
-	"path"
 
 	"github.com/nwaples/rardecode/v2"
 )
 
 // rar extracts a RAR archive, single or multi-volume, and returns the
-// volumes it read. Volumes are opened through the work directory's root.
+// volumes it read. Volumes are opened through the work directory's root,
+// and a .partN.rar set's volumes are found by number (see rarVolumes).
 func (x *extractor) rar(name string) ([]string, error) {
+	vols, err := newRARVolumes(x.root.FS(), x.files, name)
+	if err != nil {
+		return nil, err
+	}
+
 	rc, err := rardecode.OpenReader(name,
-		rardecode.FileSystem(x.root.FS()),
+		rardecode.FileSystem(vols),
 		rardecode.MaxDictionarySize(maxDictBytes))
 	if err != nil {
 		return nil, rarError(err)
@@ -48,14 +53,9 @@ func (x *extractor) rar(name string) ([]string, error) {
 		}
 	}
 
-	dir := path.Dir(name)
-
-	var volumes []string
-	for _, v := range rc.Volumes() {
-		volumes = append(volumes, path.Join(dir, path.Base(v)))
-	}
-
-	return volumes, nil
+	// rc.Volumes() names what rardecode asked for, such as part10.rar,
+	// not the files that answered.
+	return vols.opened, nil
 }
 
 func rarError(err error) error {
