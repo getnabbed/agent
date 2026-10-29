@@ -32,6 +32,8 @@ type Manager struct {
 	store  *store.Store
 	policy *Policy
 	log    *slog.Logger
+	// notifier reports library notices; nil reports none.
+	notifier Notifier
 
 	mu    sync.Mutex
 	base  context.Context // set by RunScans
@@ -149,6 +151,10 @@ func (m *Manager) Remove(ctx context.Context, tx *store.Tx, id string) error {
 
 	if _, err := tx.ExecContext(ctx, "DELETE FROM library_scans WHERE root_id = ?", id); err != nil {
 		return fmt.Errorf("delete scan: %w", err)
+	}
+
+	if err := m.rootRemovedTx(ctx, tx, id); err != nil {
+		return err
 	}
 
 	tx.AfterCommit(func() { m.stopScan(id) })

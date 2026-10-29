@@ -101,6 +101,8 @@ func (im *Importer) Import(ctx context.Context, job engine.Job, res *engine.Resu
 		done.Files = append(done.Files, &pb.ImportedFile{RelativePath: p.rel, Size: uint64(max(size, 0))})
 	}
 
+	im.Library.RootUsed(ctx, root.GetId())
+
 	if err := writeImportMarker(job.Dir, done); err != nil {
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "record import: %v", err)
 	}
@@ -132,6 +134,9 @@ func (im *Importer) place(ctx context.Context, job engine.Job, root *pb.LibraryR
 	}
 
 	method, err := im.Library.Policy().Place(ctx, Placement{Src: src, Root: root.GetPath(), Rel: p.rel, Mode: mode, Torrent: torrent, Replace: p.replace})
+	if err != nil {
+		im.Library.RootFailed(ctx, root.GetId(), err)
+	}
 
 	switch {
 	case err == nil:
