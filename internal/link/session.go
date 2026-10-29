@@ -3,6 +3,7 @@ package link
 import (
 	"context"
 	"errors"
+	"io"
 	"slices"
 	"sync"
 	"time"
@@ -61,6 +62,35 @@ func newSession(c *Client, stream pb.AgentGatewayService_ConnectClient, w *pb.We
 	}
 }
 
+// closedGrace bounds the wait for the reason a gateway closed the stream.
+const closedGrace = 5 * time.Second
+
+// closedByGateway finds out why the gateway closed the stream. Send reports
+// only io.EOF once the stream is closed; the reason, such as a GoAway or
+// the final status, is still waiting to be read. Without this, a writer
+// that happened to be sending could hide a revocation.
+func (s *session) closedByGateway(ctx context.Context, in <-chan *pb.ControlMessage, recvErr <-chan error, tok auth.AccessToken) error {
+	t := time.NewTimer(closedGrace)
+	defer t.Stop()
+
+	for {
+		select {
+		case m := <-in:
+			// Anything else sent before the close is redelivered on the
+			// next stream.
+			if g := m.GetGoAway(); g != nil {
+				return s.c.goAway(g, tok)
+			}
+		case err := <-recvErr:
+			return s.c.classify(err, tok)
+		case <-t.C:
+			return io.EOF
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
 func (s *session) run(ctx context.Context, in <-chan *pb.ControlMessage, recvErr <-chan error, tok auth.AccessToken) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
@@ -97,6 +127,10 @@ func (s *session) run(ctx context.Context, in <-chan *pb.ControlMessage, recvErr
 		case err := <-recvErr:
 			return s.c.classify(err, tok)
 		case err := <-writeErr:
+			if errors.Is(err, io.EOF) {
+				return s.closedByGateway(ctx, in, recvErr, tok)
+			}
+
 			return err
 		case <-age:
 			return errStreamAged

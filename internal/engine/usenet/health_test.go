@@ -111,8 +111,10 @@ func TestUnreachableProviderTurnsFailingOnce(t *testing.T) {
 
 	_, _ = e.Download(context.Background(), job, nil)
 
+	// Linux and macOS say "connection refused"; Windows says the target
+	// machine "actively refused it".
 	h, _ := e.Health("dead")
-	if h.State != HealthFailing || !strings.Contains(h.Detail, "connection refused") || rec.count() != 1 {
+	if h.State != HealthFailing || !strings.Contains(h.Detail, "refused") || rec.count() != 1 {
 		t.Fatalf("got %+v after %d hook calls, want one change to failing with a reason", h, rec.count())
 	}
 }

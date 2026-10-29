@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"slices"
@@ -247,6 +248,39 @@ func TestRevokedStopsRun(t *testing.T) {
 	defer cancel()
 	if err := c.Run(ctx); !errors.Is(err, ErrRevoked) {
 		t.Fatalf("Run err = %v, want ErrRevoked", err)
+	}
+}
+
+// closedStream is a stream the gateway has closed: every Send reports
+// io.EOF, as gRPC's does.
+type closedStream struct {
+	pb.AgentGatewayService_ConnectClient
+}
+
+func (closedStream) Send(*pb.AgentMessage) error { return io.EOF }
+
+func TestRevokeIsSeenWhenASendFailsFirst(t *testing.T) {
+	c, _, _, _ := start(t, func(int, pb.AgentGatewayService_ConnectServer) error { return nil })
+
+	s := newSession(c, closedStream{}, &pb.Welcome{HeartbeatMs: 60_000})
+	// Something for the writer to send at once, so its io.EOF comes first.
+	s.control <- &pb.AgentMessage{Kind: &pb.AgentMessage_Heartbeat{Heartbeat: &pb.Heartbeat{Seq: 1}}}
+
+	in := make(chan *pb.ControlMessage)
+	recvErr := make(chan error, 1)
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		in <- goAway(pb.GoAwayReason_GO_AWAY_REASON_REVOKED)
+		recvErr <- io.EOF
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var ga *goAwayError
+	if err := s.run(ctx, in, recvErr, auth.AccessToken{}); !errors.As(err, &ga) || ga.reason != pb.GoAwayReason_GO_AWAY_REASON_REVOKED {
+		t.Fatalf("got %v, want the revoking GoAway read after the failed send", err)
 	}
 }
 

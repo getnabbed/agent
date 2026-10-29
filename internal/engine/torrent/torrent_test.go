@@ -15,6 +15,7 @@ import (
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
+	"github.com/anacrolix/torrent/storage"
 	"golang.org/x/time/rate"
 
 	"github.com/getnabbed/agent/internal/engine"
@@ -78,7 +79,9 @@ func seed(t *testing.T, payloadDir string, files map[string][]byte, uploadBps in
 	src, mi := makeTorrent(t, payloadDir, files, nil)
 
 	cfg := torrent.NewDefaultClientConfig()
-	cfg.DataDir = src
+	// anacrolix's default storage keeps files mapped after use, which on
+	// Windows stops the test from removing them.
+	cfg.DefaultStorage = newFileStorage(src, storage.NewMapPieceCompletion())
 	cfg.Seed = true
 	cfg.NoDHT = true
 	cfg.DisableTrackers = true
@@ -160,6 +163,12 @@ func TestDownloadFromLocalSeeder(t *testing.T) {
 			t.Fatalf("%s: content mismatch", f.Path)
 		}
 	}
+
+	// Post-processing moves the files while the engine keeps running, so it
+	// must not hold them open: Windows cannot remove an open or mapped file.
+	if err := os.RemoveAll(filepath.Join(dir, dataDir)); err != nil {
+		t.Fatalf("remove downloaded files while the engine runs: %v", err)
+	}
 }
 
 func TestUnsafePathIsRejected(t *testing.T) {
@@ -217,7 +226,11 @@ func TestCancelAndResume(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, _ := os.ReadFile(filepath.Join(dir, res.Files[0].Path))
+	got, err := os.ReadFile(filepath.Join(dir, res.Files[0].Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if !bytes.Equal(got, files["big.bin"]) {
 		t.Fatal("resumed content mismatch")
 	}
@@ -275,10 +288,18 @@ func TestSameTorrentTwiceIsRefused(t *testing.T) {
 	defer func() { _ = e.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
-	started := make(chan struct{})
+	// Stop the first download and wait for it before the test's directories
+	// are removed: Windows cannot remove files it still has open.
+	started, firstDone := make(chan struct{}), make(chan struct{})
+	defer func() {
+		cancel()
+		<-firstDone
+	}()
+
 	go func() {
+		defer close(firstDone)
+
 		_, _ = e.Download(ctx, engine.Job{ID: "first", Dir: dir, PayloadPath: filepath.Join(dir, "payload.torrent")},
 			func(engine.Progress) {
 				select {

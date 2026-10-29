@@ -78,15 +78,30 @@ func (m *Manager) RunScans(ctx context.Context) error {
 		m.log.Warn("resume library scans", "err", err)
 	}
 
-	for _, s := range pending {
-		m.log.Info("resuming library scan", "root_id", s[0], "scan_id", s[1])
-		m.startScan(s[0], s[1])
-	}
+	m.resumeScans(pending)
 
 	<-ctx.Done()
 	m.wg.Wait()
 
 	return err
+}
+
+// resumeScans starts the scans a restart interrupted. A root whose scan
+// started since they were listed already runs the newer request, which a
+// resumed one must not cancel.
+func (m *Manager) resumeScans(pending [][2]string) {
+	for _, s := range pending {
+		m.mu.Lock()
+		running := m.scans[s[0]] != nil
+		m.mu.Unlock()
+
+		if running {
+			continue
+		}
+
+		m.log.Info("resuming library scan", "root_id", s[0], "scan_id", s[1])
+		m.startScan(s[0], s[1])
+	}
 }
 
 // pendingScans lists requested scans as (root id, scan id), oldest first.

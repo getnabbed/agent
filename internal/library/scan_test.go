@@ -335,6 +335,48 @@ func TestANewRescanReplacesTheOldOne(t *testing.T) {
 	}
 }
 
+func TestResumingDoesNotCancelANewerScan(t *testing.T) {
+	allowed, _ := layout(t)
+	m := newManager(t, allowed)
+
+	write(t, filepath.Join(allowed, "movies", "Heat (1995).mkv"), "video")
+
+	if err := m.put(root("movies", filepath.Join(allowed, "movies"))); err != nil {
+		t.Fatal(err)
+	}
+
+	// Interrupted by a restart, and listed for resuming...
+	if err := m.rescan("movies", "old"); err != nil {
+		t.Fatal(err)
+	}
+
+	pending, err := m.pendingScans(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// ...while the cloud's new request starts first.
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		m.wg.Wait()
+	})
+
+	m.mu.Lock()
+	m.base = ctx
+	m.mu.Unlock()
+
+	if err := m.rescan("movies", "new"); err != nil {
+		t.Fatal(err)
+	}
+
+	m.resumeScans(pending)
+
+	if got := paths(reports(t, m, "new")); !slices.Equal(got, []string{"Heat (1995).mkv"}) {
+		t.Fatalf("got %v", got)
+	}
+}
+
 func TestRemovedRootIsNotScanned(t *testing.T) {
 	allowed, _ := layout(t)
 	m := newManager(t, allowed)
