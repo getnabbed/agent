@@ -118,3 +118,32 @@ jobs:
         with:
           version: v2.19.0
           args: check
+
+  helm:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # tags, to tell whether the chart version is already released
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.2
+      - run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
+      # yq comes with the runner image.
+      - run: ./helm/check.sh
+      - name: Require a new chart version when the chart changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git diff --quiet "$BASE" HEAD -- helm/nabbed-agent && exit 0
+          version=$(yq '.version' helm/nabbed-agent/Chart.yaml)
+          if git rev-parse -q --verify "refs/tags/chart/v$version" >/dev/null; then
+            echo "::error file=helm/nabbed-agent/Chart.yaml::chart $version is already released; bump version in Chart.yaml"
+            exit 1
+          fi

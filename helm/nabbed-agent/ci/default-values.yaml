@@ -1,0 +1,3 @@
+# Smallest install: one agent, per-pod claims for data and downloads.
+config:
+  api_url: https://api.nabbed.example

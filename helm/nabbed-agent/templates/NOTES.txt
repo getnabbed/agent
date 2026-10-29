@@ -1,0 +1,35 @@
+{{- $fullname := include "nabbed-agent.fullname" . -}}
+{{- $ns := .Release.Namespace -}}
+{{ .Values.replicas }} Nabbed agent(s) deployed as StatefulSet {{ $ns }}/{{ $fullname }}.
+
+Each agent pairs on first start. Print the latest pairing link and code
+each agent logged (agents already paired print nothing):
+
+  for i in $(seq 0 {{ sub (int .Values.replicas) 1 }}); do
+    kubectl -n {{ $ns }} logs {{ $fullname }}-$i --tail=200 \
+      | jq -rR --arg pod {{ $fullname }}-$i 'fromjson? | select(.user_code) | "\($pod): \(.verification_uri)  code \(.user_code)"' \
+      | tail -1
+  done
+
+Open each link, check the code matches, and approve. A code expires after
+a few minutes; the agent then exits and Kubernetes restarts it with a new one.
+
+Check an agent:
+
+  kubectl -n {{ $ns }} exec {{ $fullname }}-0 -- agent status
+
+If an agent is revoked it exits with code 3 and crash-loops. To pair it
+again with a new identity, replace its data claim:
+
+  kubectl -n {{ $ns }} delete pvc data-{{ $fullname }}-0 --wait=false
+  kubectl -n {{ $ns }} delete pod {{ $fullname }}-0
+{{- $roots := (include "nabbed-agent.config" . | fromYaml).library.allowed_roots }}
+{{ if $roots }}
+Library folders the web app may import into:
+{{- range $roots }}
+  {{ . }}
+{{- end }}
+{{- else }}
+No library folders are allowed, so imports will be refused. Mount your
+library with volumes.<name>.libraryRoots, or set config.library.allowed_roots.
+{{- end }}

@@ -1,0 +1,35 @@
+# `helm test <release>`: the agent loads agent.yaml, the environment and
+# any secret files exactly as `run` does, validates them and prints the
+# result with secrets redacted. Unknown keys and bad values fail it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "nabbed-agent.fullname" . }}-test-config
+  labels:
+    {{- include "nabbed-agent.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    {{- toYaml .Values.podSecurityContext | nindent 4 }}
+  containers:
+    - name: config
+      image: {{ include "nabbed-agent.image" . }}
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      args: ["config"]
+      env:
+        {{- include "nabbed-agent.env" . | nindent 8 }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      volumeMounts:
+        {{- include "nabbed-agent.configVolumeMounts" . | nindent 8 }}
+  volumes:
+    {{- include "nabbed-agent.configVolumes" . | nindent 4 }}

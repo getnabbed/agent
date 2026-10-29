@@ -1,0 +1,185 @@
+# Nabbed agent Helm values.
+#
+# Each replica is its own agent: its own identity, its own pairing, its own
+# /data volume. Agents never talk to each other; the cloud gives each
+# download to one of them. See README.md in this chart.
+
+image:
+  repository: ghcr.io/getnabbed/agent
+  # Defaults to the chart's appVersion ("1", the major-version tag).
+  tag: ""
+  # Pin an exact image, for example "sha256:...". Overrides tag.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Number of agents. Each pairs separately on first start and shows up in
+# the web app under its pod name (<release>-nabbed-agent-0, -1, ...).
+replicas: 1
+
+# agent.yaml, rendered into a ConfigMap and mounted read-only at
+# /config/agent.yaml. Keys are exactly those of contrib/agent.example.yaml;
+# unknown keys stop the agent at start, so typos fail loudly.
+#
+# The chart owns name, data_dir, downloads.dir and torrent.port, and sets
+# them from the values below. usenet.provider holds a password, so it is
+# refused here; use usenet.existingSecret.
+config:
+  # Your Nabbed API. Required: the agent pairs on first start.
+  api_url: ""
+  log:
+    level: info
+    # JSON is what kubectl logs and log shippers want, and the pairing
+    # instructions in NOTES.txt parse it.
+    format: json
+  downloads:
+    max_concurrent: 3
+  torrent:
+    allow_lan: false
+  library:
+    # Added to the roots derived from volumes.<name>.libraryRoots.
+    allowed_roots: []
+    file_mode: "0644"
+    dir_mode: "0755"
+
+# Usenet providers set locally instead of in the web app, for a provider
+# on your network or one you keep off the cloud entirely. Prefer the web
+# app: there the browser seals credentials to each agent.
+usenet:
+  # Name of an existing Secret holding the provider URLs, for example
+  # nntps://user:password@news.example.com:563?connections=8
+  existingSecret: ""
+  secretKey: nntp
+  # Or let the chart create the Secret. Avoid committing this to git.
+  providers: ""
+
+# Extra CA bundle for a self-hosted control plane.
+tls:
+  # PEM text, stored in the chart's ConfigMap.
+  caBundle: ""
+  # Or an existing ConfigMap holding it.
+  existingConfigMap: ""
+  configMapKey: ca.pem
+
+# Credentials and state for each agent: a volumeClaimTemplate, so every
+# replica gets its own claim. It must persist: losing it means pairing the
+# agent again and re-entering its usenet providers. Never share it between
+# agents; two agents with one identity get revoked.
+persistence:
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  annotations: {}
+  # What happens to the claims when the StatefulSet is deleted or scaled
+  # down. Retain keeps identities, so scaling back up resumes the same
+  # agents. Delete throws them away; revoke the agents in the web app first.
+  retentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+
+# In-progress and completed downloads, before import.
+downloads:
+  # Empty: each replica gets its own claim from the settings below,
+  # mounted at /downloads.
+  #
+  # The name of an entry in volumes: downloads go to
+  # <mountPath>/<subPath>/<pod name> on that shared volume. Put it on the
+  # same volume as your library roots and import moves files with a rename
+  # instead of copying them.
+  volume: ""
+  subPath: downloads
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 100Gi
+  annotations: {}
+
+# Shared folders mounted into every agent, usually your media library on
+# NFS. Each entry is a Kubernetes volume source (nfs, persistentVolumeClaim,
+# hostPath, csi, ...) plus:
+#
+#   mountPath:    where it appears in the container (required)
+#   readOnly:     mount read-only (default false)
+#   libraryRoots: folders under mountPath the web app may import into,
+#                 added to library.allowed_roots. Without any, the web app
+#                 can import nowhere.
+#
+# NFS ignores fsGroup: the export must be writable by the agent's uid
+# (65532 by default), or set podSecurityContext.runAsUser and runAsGroup
+# to the export's owner.
+volumes: {}
+#  media:
+#    mountPath: /media
+#    libraryRoots: [movies, tv]
+#    nfs:
+#      server: nas.lan
+#      path: /export/media
+
+torrent:
+  # Port BitTorrent listens on in every pod. Forwarding it improves speeds
+  # but is optional: outbound connections work without it.
+  port: 6881
+  # Bind the port on the node. Pods then need their own node each.
+  hostPort: false
+  # One Service per replica, so each agent has its own address for peers.
+  # LoadBalancer suits MetalLB or a cloud; NodePort needs replicas: 1 and
+  # torrent.port in the node port range, because peers are told the port
+  # the agent listens on.
+  service:
+    enabled: false
+    type: LoadBalancer
+    annotations: {}
+    loadBalancerClass: ""
+    externalTrafficPolicy: Local
+
+# Environment variables added to the agent, for settings without a value
+# here. NABBED_* variables override agent.yaml.
+extraEnv: []
+#  - name: NABBED_LOG_LEVEL
+#    value: debug
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  # Makes the claims writable by the agent. OnRootMismatch skips the
+  # recursive walk once the volume is set up.
+  fsGroup: 65532
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+resources: {}
+#  requests:
+#    cpu: 250m
+#    memory: 256Mi
+#  limits:
+#    memory: 1Gi
+
+# Room to finish in-flight writes and report progress on SIGTERM.
+terminationGracePeriodSeconds: 30
+
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

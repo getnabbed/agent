@@ -22,6 +22,7 @@
 | Runtime hardening | Read-only root, all capabilities dropped, `no-new-privileges`, `/tmp` tmpfs | Documented in the README and set in `contrib/docker/compose.yaml`. The agent needs none of what is removed; SQLite keeps temp data in memory. |
 | Torrent networking | Peers, DHT nodes, trackers and web seeds on local networks are refused unless `torrent.allow_lan` is set; WebTorrent is disabled | Torrent metadata is untrusted: it must not be able to make the agent probe LAN devices, the router or cloud metadata endpoints. |
 | Health check | None in the image | Docker already restarts a dead process. A check that tracked cloud connectivity would restart healthy agents during cloud outages. Revisit with the local control socket. |
+| Helm chart | Own SemVer in `helm/nabbed-agent/Chart.yaml`, released by a `chart/vX.Y.Z` tag. Published to `oci://ghcr.io/getnabbed/charts` (cosign keyless, verified against `chart-release.yml@refs/tags/chart/vX.Y.Z`) and to a Helm repository on GitHub Pages whose `index.yaml` points at the archive on the chart's GitHub release | Chart fixes need no agent release, as with `proto/v*`. OCI is what Helm and Flux prefer, and the HTTPS repository serves tools that cannot use OCI. The archive lives on the release, not on Pages, so each Pages deploy only replaces the index. |
 
 ## Repository settings (outside the code)
 
@@ -37,6 +38,12 @@ repository. They must be in place before the first tag:
   `v*` tag pattern.
 - **A tag ruleset** restricting who may create or move `v*` tags.
 - **Branch protection on `main`** requiring the CI checks.
+- **For the Helm chart:** add `chart/v*` to the `release` environment's
+  tag pattern and to the tag ruleset. Enable GitHub Pages with source
+  "GitHub Actions", and allow `chart/v*` tags to deploy to the
+  `github-pages` environment, which accepts only `main` by default. After
+  the first chart release, make the `charts/nabbed-agent` package on
+  ghcr.io public.
 
 ## Configuration
 

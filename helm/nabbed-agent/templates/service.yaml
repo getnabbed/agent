@@ -1,0 +1,67 @@
+{{- $fullname := include "nabbed-agent.fullname" . }}
+# Headless Service the StatefulSet requires; it gives each agent a stable
+# DNS name (<pod>.<service>). Agents accept no connections except torrent
+# peers, so nothing in the cluster needs to call them.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "nabbed-agent.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "nabbed-agent.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: torrent-tcp
+      port: {{ .Values.torrent.port }}
+      targetPort: torrent-tcp
+      protocol: TCP
+    - name: torrent-udp
+      port: {{ .Values.torrent.port }}
+      targetPort: torrent-udp
+      protocol: UDP
+{{- if .Values.torrent.service.enabled }}
+{{- range $i := until (int .Values.replicas) }}
+---
+# Torrent peers for {{ $fullname }}-{{ $i }} alone: each agent needs its own
+# address, since they all listen on the same port.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-{{ $i }}-torrent
+  labels:
+    {{- include "nabbed-agent.labels" $ | nindent 4 }}
+  {{- with $.Values.torrent.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $.Values.torrent.service.type }}
+  {{- if and (eq $.Values.torrent.service.type "LoadBalancer") $.Values.torrent.service.loadBalancerClass }}
+  loadBalancerClass: {{ $.Values.torrent.service.loadBalancerClass }}
+  {{- end }}
+  {{- if ne $.Values.torrent.service.type "ClusterIP" }}
+  externalTrafficPolicy: {{ $.Values.torrent.service.externalTrafficPolicy }}
+  {{- end }}
+  selector:
+    {{- include "nabbed-agent.selectorLabels" $ | nindent 4 }}
+    statefulset.kubernetes.io/pod-name: {{ $fullname }}-{{ $i }}
+  ports:
+    - name: torrent-tcp
+      port: {{ $.Values.torrent.port }}
+      targetPort: torrent-tcp
+      protocol: TCP
+      {{- if eq $.Values.torrent.service.type "NodePort" }}
+      nodePort: {{ $.Values.torrent.port }}
+      {{- end }}
+    - name: torrent-udp
+      port: {{ $.Values.torrent.port }}
+      targetPort: torrent-udp
+      protocol: UDP
+      {{- if eq $.Values.torrent.service.type "NodePort" }}
+      nodePort: {{ $.Values.torrent.port }}
+      {{- end }}
+{{- end }}
+{{- end }}

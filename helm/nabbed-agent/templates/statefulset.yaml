@@ -1,0 +1,159 @@
+{{- include "nabbed-agent.validate" . }}
+{{- $fullname := include "nabbed-agent.fullname" . }}
+# A StatefulSet, not a Deployment: each agent's identity lives on its own
+# claim, and a StatefulSet never runs two pods on one claim, where a
+# Deployment's rolling update would. Two processes with one identity
+# refresh the same token and get the agent revoked.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "nabbed-agent.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  serviceName: {{ $fullname }}
+  # Agents are independent, so start and pair them all at once.
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  persistentVolumeClaimRetentionPolicy:
+    {{- toYaml .Values.persistence.retentionPolicy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "nabbed-agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/usenet: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "nabbed-agent.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "nabbed-agent.serviceAccountName" . }}
+      # The agent never talks to the Kubernetes API.
+      automountServiceAccountToken: false
+      # Service links inject variables named after Services; keep the
+      # environment to what the chart sets.
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: agent
+          image: {{ include "nabbed-agent.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # `agent run` pairs on first start: the code is in the log, see
+          # NOTES.txt. It exits 3 when the agent was revoked; the pod then
+          # crash-loops until its data claim is replaced (README.md).
+          args: ["run"]
+          env:
+            {{- include "nabbed-agent.env" . | nindent 12 }}
+          ports:
+            - name: torrent-tcp
+              containerPort: {{ .Values.torrent.port }}
+              protocol: TCP
+              {{- if .Values.torrent.hostPort }}
+              hostPort: {{ .Values.torrent.port }}
+              {{- end }}
+            - name: torrent-udp
+              containerPort: {{ .Values.torrent.port }}
+              protocol: UDP
+              {{- if .Values.torrent.hostPort }}
+              hostPort: {{ .Values.torrent.port }}
+              {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ include "nabbed-agent.dataMount" . }}
+            {{- if not .Values.downloads.volume }}
+            - name: downloads
+              mountPath: /downloads
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+            {{- include "nabbed-agent.configVolumeMounts" . | nindent 12 }}
+            {{- range $name, $v := .Values.volumes }}
+            - name: vol-{{ $name }}
+              mountPath: {{ $v.mountPath }}
+              {{- if $v.readOnly }}
+              readOnly: true
+              {{- end }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- include "nabbed-agent.configVolumes" . | nindent 8 }}
+        {{- range $name, $v := .Values.volumes }}
+        - name: vol-{{ $name }}
+          {{- $src := omit $v "mountPath" "readOnly" "libraryRoots" }}
+          {{- toYaml $src | nindent 10 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        {{- with .Values.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.accessModes | nindent 10 }}
+        {{- with .Values.persistence.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+    {{- if not .Values.downloads.volume }}
+    - metadata:
+        name: downloads
+        {{- with .Values.downloads.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.downloads.accessModes | nindent 10 }}
+        {{- with .Values.downloads.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.downloads.size }}
+    {{- end }}

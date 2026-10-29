@@ -1,0 +1,43 @@
+# Three agents sharing one NFS library. Downloads sit on the same export
+# (under downloads/<pod>), so import renames instead of copying.
+replicas: 3
+config:
+  api_url: https://api.nabbed.example
+  downloads:
+    max_concurrent: 2
+  library:
+    allowed_roots: [/media/extra]
+volumes:
+  media:
+    mountPath: /media
+    libraryRoots: [movies, tv]
+    nfs:
+      server: nas.lan
+      path: /export/media
+  archive:
+    mountPath: /archive
+    readOnly: true
+    persistentVolumeClaim:
+      claimName: archive
+downloads:
+  volume: media
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+torrent:
+  service:
+    enabled: true
+    annotations:
+      metallb.io/address-pool: torrent
+usenet:
+  providers: nntps://user:password@news.example.com:563?connections=8
+tls:
+  caBundle: |
+    -----BEGIN CERTIFICATE-----
+    MIIBszCCAVmgAwIBAgIUBzbG
+    -----END CERTIFICATE-----

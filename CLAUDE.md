@@ -19,6 +19,7 @@ make proto-push   # publish proto/ to buf.build/nabbed/agent (labels main, git-<
 make vuln         # govulncheck on code paths the agent calls
 make docker       # build the container image from source
 make snapshot     # unsigned GoReleaser build of every release archive
+make helm         # lint the Helm chart, kubeconform it, check its agent.yaml
 ```
 
 Base images are pinned by digest in literal `FROM` lines (Dependabot updates
