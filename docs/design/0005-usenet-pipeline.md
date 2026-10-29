@@ -83,11 +83,30 @@ out the fastest usenet libraries. Each stage was checked in October 2026.
      name, is not searched for as par2cmdline does with `-N`. Decoding is
      scalar and single-threaded.
 4. **Extract (done).** RAR (single and multi-volume, `.partN.rar` and
-   `.rNN` naming), 7z (including `.7z.001` splits) and ZIP, into
+   `.rNN` naming), 7z (including `.7z.001` splits), ZIP and raw splits, into
    `extracted/` in the work directory. Torrents go through the same step.
    - **Finding archives.** By name: the first volume of each set, confirmed
      by its signature. A file whose contents don't match its extension is
      left alone. Archives inside archives are not extracted.
+   - **Finding volumes.** By number, not by a rebuilt name. Posters pad
+     volume numbers inconsistently (`part01`…`part09`, then `part010`…),
+     and rardecode looks for the next volume by incrementing the previous
+     name at the same width, so it would ask for `part10.rar`. The agent
+     answers rardecode's requests for a `.partN.rar` volume with the file
+     of that number in the same folder and set (the same name around the
+     number, ignoring case); `.7z.NNN` splits are listed the same way. Two
+     files with one number, or a gap, fail the job instead of guessing.
+     rardecode still checks each volume's header number against its place,
+     so a file that is only named like the right volume is refused.
+   - **Raw splits.** A file cut into pieces with no archive format of its
+     own (`movie.mkv.001`, `release.rar.001`) is joined back before
+     archives are looked for, so a joined archive is then extracted like
+     any other. A set needs its first piece (`000` or `001`), every number
+     up to the last, and pieces of equal size but the last, or the job
+     fails. The piece's own extension must start with a letter, so a name
+     ending in a year is never taken for a piece. The join is written to
+     a temporary file and renamed into place, counts against the output
+     limit, and its pieces are deleted with the archive volumes.
    - **Paths.** Every entry is written through `os.Root`. Each path
      component is sanitised like an NZB name, `..` entries are skipped, and
      names that collide (including by case only) get a numbered suffix.

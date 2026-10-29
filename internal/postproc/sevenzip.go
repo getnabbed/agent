@@ -113,21 +113,19 @@ func newPPMd(p []byte, size uint64, in []io.ReadCloser) (io.ReadCloser, error) {
 }
 
 // sevenZip extracts a 7z archive. A split archive (name.7z.001, .002, …) is
-// read as one stream across its volumes.
+// read as one stream across its volumes, found by number whatever their
+// zero padding.
 func (x *extractor) sevenZip(name string) ([]string, error) {
 	volumes := []string{name}
 
-	if m := re7zSplit.FindStringSubmatchIndex(path.Base(name)); m != nil {
-		dir, base := path.Dir(name), path.Base(name)
-		stem, width := base[:m[2]], m[3]-m[2]
+	if re7zSplit.MatchString(path.Base(name)) {
+		set, err := volumeSet(x.files, re7zSplit, name)
+		if err != nil {
+			return nil, err
+		}
 
-		for i := 2; ; i++ {
-			next := path.Join(dir, fmt.Sprintf("%s%0*d", stem, width, i))
-			if _, err := x.root.Stat(next); err != nil {
-				break
-			}
-
-			volumes = append(volumes, next)
+		if volumes, err = inOrder(set, 1); err != nil {
+			return nil, err
 		}
 	}
 
