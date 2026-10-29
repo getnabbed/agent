@@ -1,0 +1,136 @@
+name: Chart release
+
+# The Helm chart is versioned on its own: tag chart/vX.Y.Z on main, where
+# X.Y.Z is the version in helm/nabbed-agent/Chart.yaml. Publishes to
+#
+#   oci://ghcr.io/getnabbed/charts/nabbed-agent   (signed with cosign)
+#   the GitHub Pages Helm repository, whose index.yaml points at the
+#   chart archive attached to the chart's GitHub release.
+on:
+  push:
+    tags: ["chart/v*"]
+
+# Default to nothing; each job asks for exactly what it needs.
+permissions: {}
+
+# The Pages index is read, merged and replaced; never let two releases race.
+concurrency:
+  group: chart-release
+  cancel-in-progress: false
+
+env:
+  CHART: nabbed-agent
+  # Fixed, like the image name in .goreleaser.yaml, so the published name
+  # never follows a repository rename (design 0004).
+  OCI_REPO: ghcr.io/getnabbed/charts
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Same protected environment as agent releases.
+    environment: release
+    permissions:
+      contents: write      # create the GitHub release
+      packages: write      # push the chart to ghcr.io
+      id-token: write      # keyless cosign signing and provenance
+      attestations: write  # build provenance attestation
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require the tagged commit to be on main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::tag $GITHUB_REF_NAME points at a commit that is not on main"; exit 1; }
+      - name: Require the tag to match Chart.yaml
+        run: |
+          version=$(yq '.version' "helm/$CHART/Chart.yaml")
+          test "$GITHUB_REF_NAME" = "chart/v$version" \
+            || { echo "::error::tag $GITHUB_REF_NAME does not match chart version $version"; exit 1; }
+          echo "VERSION=$version" >>"$GITHUB_ENV"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false # never restore a cache into a release build
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.2
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
+      - run: ./helm/check.sh
+
+      - name: Package
+        run: helm package "helm/$CHART" --destination dist/chart
+
+      - name: Push to ghcr.io and sign
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GITHUB_TOKEN"
+          helm push "dist/chart/$CHART-$VERSION.tgz" "oci://$OCI_REPO" 2>&1 | tee dist/push.log
+          digest=$(grep -oE 'sha256:[0-9a-f]{64}' dist/push.log | head -1)
+          test -n "$digest" || { echo "::error::no digest in helm push output"; exit 1; }
+          cosign sign --yes "$OCI_REPO/$CHART@$digest"
+
+      # SLSA build provenance for the archive, verifiable with
+      #   gh attestation verify nabbed-agent-X.Y.Z.tgz --repo getnabbed/agent
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/chart/*.tgz
+
+      # Not marked latest, so the agent's own release stays the latest one.
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "dist/chart/$CHART-$VERSION.tgz" \
+            --verify-tag --latest=false \
+            --title "Helm chart $VERSION" \
+            --notes "Helm chart $CHART $VERSION. Install from \`oci://$OCI_REPO/$CHART --version $VERSION\`, or from the Helm repository in the chart's README."
+
+  pages:
+    needs: publish
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    permissions:
+      contents: read  # download the release archive
+      pages: write
+      id-token: write # deploy-pages
+    steps:
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.2
+      - id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      # Each deploy replaces the whole site, so merge the new version into
+      # the live index. Only a missing index (the first release) starts a
+      # new one; any other failure stops rather than dropping old versions.
+      - name: Build index.yaml
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          mkdir -p new site
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern '*.tgz' --dir new
+          asset=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | select(.name | endswith(".tgz")) | .url')
+
+          status=$(curl -sS -o old-index.yaml -w '%{http_code}' "$BASE_URL/index.yaml")
+          case "$status" in
+            200) merge=(--merge old-index.yaml) ;;
+            404) merge=() ;;
+            *) echo "::error::fetching the live index.yaml returned HTTP $status"; exit 1 ;;
+          esac
+
+          helm repo index new --url "${asset%/*}" "${merge[@]}"
+          cp new/index.yaml site/index.yaml
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
