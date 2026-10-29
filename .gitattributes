@@ -1,0 +1,17 @@
+# Check text out with LF everywhere, so a Windows checkout with
+# core.autocrlf builds and tests the same bytes as Linux and macOS.
+* text=auto eol=lf
+
+# Archive and recovery fixtures are binary. Git's text detection only looks
+# for NUL bytes, and a volume of compressed data can have none, so without
+# this a checkout may rewrite LF bytes inside it.
+*.7z binary
+*.7z.[0-9][0-9][0-9] binary
+*.rar binary
+*.r[0-9][0-9] binary
+*.par2 binary
+*.zip binary
+*.gz binary
+*.tgz binary
+*.png binary
+*.ico binary
