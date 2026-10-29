@@ -8,7 +8,7 @@ separate agent with its own identity, pairing and data volume.
 From the OCI registry:
 
 ```sh
-helm install nabbed oci://ghcr.io/getnabbed/charts/nabbed-agent --version 0.1.0 \
+helm install nabbed oci://ghcr.io/wilderness-cloud/charts/nabbed-agent --version 0.1.0 \
   --namespace nabbed --create-namespace \
   --set config.api_url=https://api.nabbed.example
 ```
@@ -16,7 +16,7 @@ helm install nabbed oci://ghcr.io/getnabbed/charts/nabbed-agent --version 0.1.0 
 Or from the Helm repository:
 
 ```sh
-helm repo add nabbed https://getnabbed.github.io/agent
+helm repo add nabbed https://wilderness-cloud.github.io/agent
 helm install nabbed nabbed/nabbed-agent --version 0.1.0 \
   --namespace nabbed --create-namespace \
   --set config.api_url=https://api.nabbed.example
@@ -32,22 +32,23 @@ identity, as the images are. Verify against the exact workflow and tag:
 
 ```sh
 VERSION=0.1.0
-cosign verify ghcr.io/getnabbed/charts/nabbed-agent:$VERSION \
-  --certificate-identity "https://github.com/getnabbed/agent/.github/workflows/chart-release.yml@refs/tags/chart/v$VERSION" \
+cosign verify ghcr.io/wilderness-cloud/charts/nabbed-agent:$VERSION \
+  --certificate-identity "https://github.com/wilderness-cloud/agent/.github/workflows/chart-release.yml@refs/tags/chart/v$VERSION" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-github-workflow-trigger push
 
 # The archive from the Helm repository or the GitHub release:
-gh attestation verify nabbed-agent-$VERSION.tgz --repo getnabbed/agent \
-  --signer-workflow getnabbed/agent/.github/workflows/chart-release.yml
+gh attestation verify nabbed-agent-$VERSION.tgz --repo wilderness-cloud/agent \
+  --signer-workflow wilderness-cloud/agent/.github/workflows/chart-release.yml
 ```
 
 ## Versions
 
 The chart has its own version, separate from the agent's. `appVersion` is
-the default image tag. It is `1`, the agent's major-version tag, so the
-chart picks up agent fixes without a chart release. Pin `image.tag` or
-`image.digest` to choose an exact agent.
+the agent release the chart runs by default (`image.tag` defaults to it),
+so each chart version pins an exact agent. A new agent release gets a chart
+release that bumps `appVersion`. Set `image.tag` or `image.digest` to run
+another agent.
 
 Bump `version` in `Chart.yaml` in any pull request that changes the chart.
 CI fails if the version is already released. Bump the patch for fixes, the

@@ -3,7 +3,7 @@ name: Chart release
 # The Helm chart is versioned on its own: tag chart/vX.Y.Z on main, where
 # X.Y.Z is the version in helm/nabbed-agent/Chart.yaml. Publishes to
 #
-#   oci://ghcr.io/getnabbed/charts/nabbed-agent   (signed with cosign)
+#   oci://ghcr.io/wilderness-cloud/charts/nabbed-agent   (signed with cosign)
 #   the GitHub Pages Helm repository, whose index.yaml points at the
 #   chart archive attached to the chart's GitHub release.
 on:
@@ -20,9 +20,9 @@ concurrency:
 
 env:
   CHART: nabbed-agent
-  # Fixed, like the image name in .goreleaser.yaml, so the published name
-  # never follows a repository rename (design 0004).
-  OCI_REPO: ghcr.io/getnabbed/charts
+  # Spelled out like the image name in .goreleaser.yaml: published names
+  # follow the repository that signs them (design 0004).
+  OCI_REPO: ghcr.io/wilderness-cloud/charts
 
 jobs:
   publish:
@@ -75,7 +75,7 @@ jobs:
           cosign sign --yes "$OCI_REPO/$CHART@$digest"
 
       # SLSA build provenance for the archive, verifiable with
-      #   gh attestation verify nabbed-agent-X.Y.Z.tgz --repo getnabbed/agent
+      #   gh attestation verify nabbed-agent-X.Y.Z.tgz --repo wilderness-cloud/agent
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/chart/*.tgz

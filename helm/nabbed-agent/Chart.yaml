@@ -3,14 +3,13 @@ name: nabbed-agent
 description: The Nabbed download agent, one paired agent per StatefulSet replica.
 type: application
 version: 0.1.0
-# Default image tag. "1" is the major-version tag, as in the Compose file:
-# it picks up fixes, never a breaking release. Pin image.tag or
-# image.digest for full control.
-appVersion: "1"
+# The agent release this chart version runs by default: image.tag
+# defaults to it. Each chart release pins an exact, signed agent.
+appVersion: "0.1.0"
 kubeVersion: ">=1.27.0-0"
-home: https://github.com/getnabbed/agent
+home: https://github.com/wilderness-cloud/agent
 sources:
-  - https://github.com/getnabbed/agent
+  - https://github.com/wilderness-cloud/agent
 keywords:
   - nabbed
   - usenet
