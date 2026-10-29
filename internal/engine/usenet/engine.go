@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -408,6 +409,16 @@ type download struct {
 	doneBytes atomic.Int64
 	missing   atomic.Int64
 
+	// A release is beyond repair once the articles missing from every
+	// provider add up to more than its PAR2 recovery volumes hold: repair
+	// can never restore more than that. recovery is their total size and
+	// repairKnown says the NZB names its PAR2 files, without which the
+	// recovery data cannot be told apart from obfuscated data files.
+	recovery     int64
+	repairKnown  bool
+	missingBytes atomic.Int64
+	checked      atomic.Int64
+
 	// ids names each pool's source; served counts the articles each one
 	// supplied in this run, for stats and notes.
 	ids    map[*pool]string
@@ -426,6 +437,16 @@ func (d *download) run(ctx context.Context, progress func(engine.Progress)) (*en
 	)
 
 	for i, f := range d.nzb.Files {
+		if strings.EqualFold(path.Ext(f.Name), ".par2") {
+			d.repairKnown = true
+		}
+
+		if IsPAR2Volume(f.Name) {
+			for _, seg := range f.Segments {
+				d.recovery += seg.Bytes
+			}
+		}
+
 		if !d.want(f.Name) {
 			if IsPAR2Volume(f.Name) {
 				result.Deferred = append(result.Deferred, f.Name)
@@ -579,6 +600,7 @@ func (d *download) noteRun(missing int) {
 func (d *download) worker(ctx context.Context, fatal context.CancelCauseFunc, items <-chan workItem) {
 	for it := range items {
 		err := d.fetch(ctx, it)
+		checked := d.checked.Add(1)
 
 		var f *engine.Failure
 		switch {
@@ -589,9 +611,49 @@ func (d *download) worker(ctx context.Context, fatal context.CancelCauseFunc, it
 			fatal(f)
 			return
 		default:
-			d.missing.Add(1)
+			missing := d.missing.Add(1)
+
+			if f := d.beyondRepair(missing, d.missingBytes.Add(it.segment.Bytes), checked); f != nil {
+				fatal(f)
+				return
+			}
 		}
 	}
+}
+
+// beyondRepair returns a failure once a release download has lost more
+// article data than its PAR2 recovery volumes could restore, so a release
+// taken down from every provider fails in minutes, not after every article
+// has been asked for. It returns nil while repair may still succeed, for
+// recovery fetches, and when the NZB names no PAR2 files.
+func (d *download) beyondRepair(missing, missingBytes, checked int64) error {
+	if !d.main || !d.repairKnown || missingBytes <= d.recovery {
+		return nil
+	}
+
+	d.e.log.Info("usenet release cannot be repaired; stopping early",
+		"missing_articles", missing, "missing_bytes", missingBytes, "recovery_bytes", d.recovery, "checked", checked)
+
+	return engine.Fail(pb.FailureClass_FAILURE_CLASS_INCOMPLETE, false,
+		"%d of the %d articles checked are missing (%s), more than the release's PAR2 recovery volumes (%s) can repair",
+		missing, checked, humanBytes(missingBytes), humanBytes(d.recovery))
+}
+
+// humanBytes renders n like "1.5 GB" for failure details.
+func humanBytes(n int64) string {
+	const unit = 1000
+
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "kMGTPE"[exp])
 }
 
 // fetch tries the article on each provider in route order. It returns nil
