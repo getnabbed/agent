@@ -2,7 +2,9 @@ package postproc
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/getnabbed/agent/internal/engine"
@@ -231,14 +233,39 @@ func TestRawSplitWithUnevenPiecesFailsForGood(t *testing.T) {
 	wantExtractFailure(t, err, "differ in size")
 }
 
-func TestRawSplitVolumeClaimedTwiceFailsForGood(t *testing.T) {
-	p := pieces(seq(40000), 2)
-	j, res := workDir(t, map[string][]byte{
-		"movie.mkv.001": p[0], "movie.mkv.002": p[1], "Movie.MKV.002": p[1],
-	})
+func TestVolumeClaimedTwiceIsAmbiguous(t *testing.T) {
+	// Names that differ only in case can only coexist on a case-sensitive
+	// filesystem, so the rule is tested on file lists rather than on disk.
+	for _, tc := range []struct {
+		re    *regexp.Regexp
+		files []string
+	}{
+		{reRawSplit, []string{"data/movie.mkv.001", "data/movie.mkv.002", "data/Movie.MKV.002"}},
+		{reRarPart, []string{"data/rel.part1.rar", "data/rel.part2.rar", "data/rel.part002.rar"}},
+		{re7zSplit, []string{"data/rel.7z.001", "data/rel.7z.2", "data/rel.7z.002"}},
+	} {
+		_, err := volumeSet(tc.files, tc.re, tc.files[0])
+		if !errors.Is(err, errAmbiguousVolume) {
+			t.Fatalf("got %v for %v, want errAmbiguousVolume", err, tc.files)
+		}
+	}
+}
 
-	_, err := assemble(j, res)
-	wantExtractFailure(t, err, "same volume number")
+func TestVolumeSetKeepsToItsOwnFolderAndName(t *testing.T) {
+	files := []string{
+		"data/rel.part01.rar", "data/rel.part010.rar", "data/REL.PART2.rar",
+		"other/rel.part3.rar", "data/rel2.part3.rar", "data/rel.part4.rar.bak",
+	}
+
+	set, err := volumeSet(files, reRarPart, files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[int]string{1: "data/rel.part01.rar", 2: "data/REL.PART2.rar", 10: "data/rel.part010.rar"}
+	if fmt.Sprint(set) != fmt.Sprint(want) {
+		t.Fatalf("got set %v, want %v", set, want)
+	}
 }
 
 func TestNumberedNamesThatAreNotSplitsAreLeftAlone(t *testing.T) {
