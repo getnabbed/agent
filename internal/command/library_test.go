@@ -115,8 +115,11 @@ func TestBrowseFilesystemQuery(t *testing.T) {
 		t.Fatalf("got %v (%+v), want the movies folder", res, got)
 	}
 
-	res = a.HandleQuery(context.Background(), &pb.Query{Id: "q2", Kind: &pb.Query_BrowseFilesystem{BrowseFilesystem: &pb.BrowseFilesystem{Path: "/"}}})
+	// The folder above the allowed one: an absolute path on every OS.
+	above := filepath.Dir(media)
+
+	res = a.HandleQuery(context.Background(), &pb.Query{Id: "q2", Kind: &pb.Query_BrowseFilesystem{BrowseFilesystem: &pb.BrowseFilesystem{Path: above}}})
 	if res.GetOk() || !strings.Contains(res.GetError(), "not allowed") {
-		t.Fatalf("got %v browsing /, want refused", res)
+		t.Fatalf("got %v browsing %s, want refused", res, above)
 	}
 }
