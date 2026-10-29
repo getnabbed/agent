@@ -466,7 +466,8 @@ message Note {
 message DownloadStats {
   // Payload bytes transferred.
   uint64 bytes = 1;
-  // Time spent downloading, across attempts.
+  // Time the final download run took; a resumed download counts only the
+  // run that finished.
   uint64 duration_ms = 2;
   uint64 avg_bps = 3;
   // The usenet source that served most articles, if any.

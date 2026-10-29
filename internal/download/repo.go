@@ -86,13 +86,19 @@ func insert(ctx context.Context, tx *store.Tx, d *pb.Download) error {
 		return err
 	}
 
-	return emit(ctx, tx, d.GetId(), Queued, nil)
+	return emit(ctx, tx, d.GetId(), Queued, nil, extra{})
+}
+
+// extra is what a DownloadUpdate carries beyond its state and failure.
+type extra struct {
+	notes []*pb.Note
+	stats *pb.DownloadStats
 }
 
 // transition moves id from one state to another only if it is still in
 // from, records the failure (or clears it) and emits DownloadUpdate. It
 // reports whether the row changed.
-func transition(ctx context.Context, tx *store.Tx, id string, from, to State, f *engine.Failure) (bool, error) {
+func transition(ctx context.Context, tx *store.Tx, id string, from, to State, f *engine.Failure, x extra) (bool, error) {
 	var (
 		class     int32
 		retryable bool
@@ -122,12 +128,12 @@ func transition(ctx context.Context, tx *store.Tx, id string, from, to State, f 
 		pf = f.Proto()
 	}
 
-	return true, emit(ctx, tx, id, to, pf)
+	return true, emit(ctx, tx, id, to, pf, x)
 }
 
-func emit(ctx context.Context, tx *store.Tx, id string, s State, f *pb.Failure) error {
+func emit(ctx context.Context, tx *store.Tx, id string, s State, f *pb.Failure, x extra) error {
 	_, err := tx.Enqueue(ctx, &pb.Event{Kind: &pb.Event_DownloadUpdate{DownloadUpdate: &pb.DownloadUpdate{
-		DownloadId: id, State: s, Failure: f,
+		DownloadId: id, State: s, Failure: f, Notes: x.notes, Stats: x.stats,
 	}}})
 
 	return err

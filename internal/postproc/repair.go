@@ -29,6 +29,7 @@ type repair struct {
 	targets map[*par2.File]string
 	volumes []string // volumes already in the work directory
 	log     *slog.Logger
+	fetched int // recovery volumes fetched for this repair
 }
 
 func (r *repair) run(ctx context.Context) error {
@@ -54,6 +55,9 @@ func (r *repair) run(ctx context.Context) error {
 	}
 
 	if have := len(r.set.Recovery); r.rep.Needed > have {
+		r.job.Notes.Error("par2.repair_failed", fmt.Sprintf("PAR2 repair needs %d recovery blocks; only %d could be obtained", r.rep.Needed, have),
+			"missing_blocks", r.rep.Needed-have, "damaged_files", damaged, "missing_files", missing)
+
 		if r.a.Fetcher == nil && have+r.deferredBlocks() >= r.rep.Needed {
 			// The release could be repaired by an agent that can fetch.
 			return engine.Fail(pb.FailureClass_FAILURE_CLASS_REPAIR, true,
@@ -77,6 +81,9 @@ func (r *repair) run(ctx context.Context) error {
 	}
 
 	r.log.Info("par2 repair finished", "damaged_files", damaged, "missing_files", missing, "blocks_used", r.rep.Needed)
+	r.job.Notes.Info("par2.repaired",
+		fmt.Sprintf("PAR2 repaired %d damaged and %d missing files with %d recovery blocks", damaged, missing, r.rep.Needed),
+		"blocks", r.rep.Needed, "volumes_fetched", r.fetched, "damaged_files", damaged, "missing_files", missing)
 
 	return nil
 }
@@ -182,6 +189,8 @@ func (r *repair) fetch(ctx context.Context) error {
 		for _, f := range got.Files {
 			fetched = append(fetched, f.Path)
 		}
+
+		r.fetched += len(fetched)
 
 		if err := r.read(fetched); err != nil {
 			return err

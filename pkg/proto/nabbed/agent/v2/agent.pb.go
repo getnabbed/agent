@@ -3733,7 +3733,8 @@ type DownloadStats struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Payload bytes transferred.
 	Bytes uint64 `protobuf:"varint,1,opt,name=bytes,proto3" json:"bytes,omitempty"`
-	// Time spent downloading, across attempts.
+	// Time the final download run took; a resumed download counts only the
+	// run that finished.
 	DurationMs uint64 `protobuf:"varint,2,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
 	AvgBps     uint64 `protobuf:"varint,3,opt,name=avg_bps,json=avgBps,proto3" json:"avg_bps,omitempty"`
 	// The usenet source that served most articles, if any.

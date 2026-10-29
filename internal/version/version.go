@@ -20,7 +20,21 @@ var (
 	Date = ""
 )
 
+// withV prefixes "v" to a version that starts with a digit, such as
+// "0.1.0". Others, such as "dev" or "v0.1.0", are kept.
+func withV(v string) string {
+	if v != "" && v[0] >= '0' && v[0] <= '9' {
+		return "v" + v
+	}
+
+	return v
+}
+
 func init() {
+	// GoReleaser passes the version without its "v"; the cloud shows it
+	// as sent, so every numeric version gets one.
+	defer func() { Version = withV(Version) }()
+
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return

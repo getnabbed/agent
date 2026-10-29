@@ -101,6 +101,8 @@ func TestBackupFillsMissingArticles(t *testing.T) {
 	backup := full.provider("", "", 2)
 	backup.Backup = true
 
+	job.Notes = &engine.Notes{}
+
 	res, err := newTestEngine(t, primary.provider("", "", 2), backup).Download(context.Background(), job, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -114,6 +116,16 @@ func TestBackupFillsMissingArticles(t *testing.T) {
 
 	if got := full.bodies.Load(); got != 2 {
 		t.Fatalf("got %d articles from the backup, want only the 2 the primary lacked", got)
+	}
+
+	if s := res.Stats; s == nil || s.SourceID != "p0" || s.Bytes == 0 || s.RunBytes != s.Bytes {
+		t.Fatalf("got stats %+v, want the primary p0 as the main source and every byte from this run", s)
+	}
+
+	notes := job.Notes.Drain()
+	if len(notes) != 1 || notes[0].GetCode() != "usenet.provider_fallback" ||
+		notes[0].GetAttrs()["from"] != "p0" || notes[0].GetAttrs()["to"] != "p1" || notes[0].GetAttrs()["articles"] != "2" {
+		t.Fatalf("got notes %v, want one fallback note for 2 articles from p1", notes)
 	}
 }
 

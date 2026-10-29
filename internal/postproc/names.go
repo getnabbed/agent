@@ -1,12 +1,14 @@
 package postproc
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path"
 	"regexp"
 	"strings"
 
+	"github.com/getnabbed/agent/internal/engine"
 	"github.com/getnabbed/agent/internal/engine/usenet"
 )
 
@@ -49,7 +51,7 @@ func looksObfuscated(name string) bool {
 // own name is obfuscated, keeping the extension. Other files sharing its
 // stem, such as a matching .srt or .nfo, are renamed alike. Names already
 // taken are left alone. It returns files with the new paths.
-func nameMainFile(root *os.Root, files []string, title string, log *slog.Logger) []string {
+func nameMainFile(root *os.Root, files []string, title string, log *slog.Logger, notes *engine.Notes) []string {
 	if strings.TrimSpace(title) == "" {
 		return files
 	}
@@ -95,6 +97,7 @@ func nameMainFile(root *os.Root, files []string, title string, log *slog.Logger)
 		}
 
 		log.Info("named obfuscated file after the release", "from", f, "to", to)
+		notes.Info("name.from_release", fmt.Sprintf("Named %s after the release", path.Base(f)), "from", path.Base(f), "to", path.Base(to))
 		out = append(out, to)
 	}
 

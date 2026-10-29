@@ -101,6 +101,7 @@ func wantRelease(t *testing.T, j engine.Job, out *engine.Result) {
 func TestRepairFetchesTheSmallestVolumeAndRenames(t *testing.T) {
 	// Damage past the first 16 KiB, under an obfuscated name.
 	j, res := damagedJob(t, map[string][]byte{"a8f3k2b9": hurt(seq(40000), 5), "x91mq": seq(300)})
+	j.Notes = &engine.Notes{}
 	f := &fakeFetcher{}
 
 	out, err := assembleWith(f, j, res)
@@ -110,6 +111,10 @@ func TestRepairFetchesTheSmallestVolumeAndRenames(t *testing.T) {
 
 	if !reflect.DeepEqual(f.asked, [][]string{{"release.vol2+1.par2"}}) {
 		t.Fatalf("got fetches %v, want only the 1-block volume", f.asked)
+	}
+
+	if a := noted(j)["par2.repaired"].GetAttrs(); a["blocks"] != "1" || a["volumes_fetched"] != "1" || a["damaged_files"] != "1" {
+		t.Fatalf("got par2.repaired attrs %v, want 1 block from 1 fetched volume for 1 damaged file", a)
 	}
 
 	wantRelease(t, j, out)
@@ -156,6 +161,7 @@ func TestRepairTruncatesWithoutFetching(t *testing.T) {
 
 func TestRepairBeyondTheRecoveryVolumesFailsForGood(t *testing.T) {
 	j, res := damagedJob(t, map[string][]byte{"movie.mkv": hurt(seq(40000), 1, 2, 3)})
+	j.Notes = &engine.Notes{}
 	f := &fakeFetcher{}
 
 	_, err := assembleWith(f, j, res)
@@ -163,6 +169,10 @@ func TestRepairBeyondTheRecoveryVolumesFailsForGood(t *testing.T) {
 	var fail *engine.Failure
 	if !errors.As(err, &fail) || fail.Class != pb.FailureClass_FAILURE_CLASS_INCOMPLETE || fail.Retryable || !strings.Contains(fail.Detail, "need 4") {
 		t.Fatalf("got %v, want a permanent INCOMPLETE failure needing 4 blocks", err)
+	}
+
+	if n := noted(j)["par2.repair_failed"]; n.GetSeverity() != pb.Severity_SEVERITY_ERROR || n.GetAttrs()["missing_blocks"] == "" {
+		t.Fatalf("got %v, want an error note with the missing blocks", n)
 	}
 
 	if len(f.asked) != 1 || len(f.asked[0]) != 2 {

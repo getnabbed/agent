@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -328,7 +329,7 @@ func writeMarker(root *os.Root, m *marker) error {
 // unpack extracts the archives among files into extractDir, then deletes
 // the archives and par2 files. It returns the assembled result: extracted
 // files plus downloaded files that were neither archives nor PAR2.
-func (a *Assembler) unpack(ctx context.Context, root *os.Root, title string, files, par2Files []string, log *slog.Logger) (*engine.Result, error) {
+func (a *Assembler) unpack(ctx context.Context, root *os.Root, job engine.Job, files, par2Files []string, log *slog.Logger) (*engine.Result, error) {
 	var data []string
 	for _, f := range files {
 		if !slices.Contains(par2Files, f) {
@@ -367,6 +368,8 @@ func (a *Assembler) unpack(ctx context.Context, root *os.Root, title string, fil
 		}
 
 		log.Info("extracted archive", "archive", arc.name, "kind", arc.kind, "volumes", len(volumes))
+		job.Notes.Info("extract.done", fmt.Sprintf("Extracted %s (%s, %d volumes)", path.Base(arc.name), arc.kind, len(volumes)),
+			"archive", path.Base(arc.name), "kind", arc.kind, "volumes", len(volumes))
 		remove = append(remove, volumes...)
 	}
 
@@ -378,7 +381,7 @@ func (a *Assembler) unpack(ctx context.Context, root *os.Root, title string, fil
 	}
 
 	m.Files = append(m.Files, x.written...)
-	m.Files = nameMainFile(root, m.Files, title, log)
+	m.Files = nameMainFile(root, m.Files, job.Title, log, job.Notes)
 
 	if len(archives) > 0 || len(remove) > 0 {
 		if err := writeMarker(root, m); err != nil {
@@ -388,6 +391,8 @@ func (a *Assembler) unpack(ctx context.Context, root *os.Root, title string, fil
 
 	if x.skipped > 0 {
 		log.Warn("archives had entries that were not extracted", "entries", x.skipped)
+		job.Notes.Warn("extract.entries_skipped", fmt.Sprintf("%d archive entries were not extracted (unsafe names or links)", x.skipped),
+			"count", x.skipped)
 	}
 
 	return finish(root, m, log), nil

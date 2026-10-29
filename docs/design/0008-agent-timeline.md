@@ -73,7 +73,7 @@ message Note {
 
 message DownloadStats {
   uint64 bytes = 1;                 // payload bytes transferred
-  uint64 duration_ms = 2;           // time in DOWNLOADING
+  uint64 duration_ms = 2;           // the final download run
   uint64 avg_bps = 3;
   string source_id = 4;             // usenet source used, if any
   uint32 missing_articles = 5;

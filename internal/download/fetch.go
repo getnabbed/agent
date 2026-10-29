@@ -32,7 +32,7 @@ type PayloadFetcher interface {
 
 // fetchPayload downloads ref into dir/name unless a verified copy is
 // already there. Size and sha256 are checked here, whatever the fetcher.
-func fetchPayload(ctx context.Context, f PayloadFetcher, ref *pb.PayloadRef, dir, name string) error {
+func fetchPayload(ctx context.Context, f PayloadFetcher, ref *pb.PayloadRef, dir, name string, notes *engine.Notes) error {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "open work dir: %v", err)
@@ -59,6 +59,10 @@ func fetchPayload(ctx context.Context, f PayloadFetcher, ref *pb.PayloadRef, dir
 
 		lastErr = fetchOnce(ctx, f, ref, root, name)
 		if lastErr == nil {
+			if attempt > 0 {
+				notes.Info("fetch.retried", fmt.Sprintf("Fetched the release file after %d attempts", attempt+1), "attempts", attempt+1)
+			}
+
 			return nil
 		}
 
