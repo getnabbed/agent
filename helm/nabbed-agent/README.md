@@ -8,7 +8,7 @@ separate agent with its own identity, pairing and data volume.
 From the OCI registry:
 
 ```sh
-helm install nabbed oci://ghcr.io/wilderness-cloud/charts/nabbed-agent --version 0.1.0 \
+helm install nabbed oci://ghcr.io/wilderness-cloud/charts/nabbed-agent --version 0.1.1 \
   --namespace nabbed --create-namespace \
   --set config.api_url=https://api.nabbed.example
 ```
@@ -17,7 +17,7 @@ Or from the Helm repository:
 
 ```sh
 helm repo add nabbed https://wilderness-cloud.github.io/agent
-helm install nabbed nabbed/nabbed-agent --version 0.1.0 \
+helm install nabbed nabbed/nabbed-agent --version 0.1.1 \
   --namespace nabbed --create-namespace \
   --set config.api_url=https://api.nabbed.example
 ```
@@ -31,7 +31,7 @@ The chart is signed with cosign using the release workflow's GitHub
 identity, as the images are. Verify against the exact workflow and tag:
 
 ```sh
-VERSION=0.1.0
+VERSION=0.1.1
 cosign verify ghcr.io/wilderness-cloud/charts/nabbed-agent:$VERSION \
   --certificate-identity "https://github.com/wilderness-cloud/agent/.github/workflows/chart-release.yml@refs/tags/chart/v$VERSION" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -58,7 +58,7 @@ an upgrade needs manual steps.
 To release, tag the merged commit on `main`:
 
 ```sh
-git tag -s chart/v0.1.0 -m "Helm chart 0.1.0" && git push origin chart/v0.1.0
+git tag -s chart/v0.1.1 -m "Helm chart 0.1.1" && git push origin chart/v0.1.1
 ```
 
 The `Chart release` workflow checks the chart and checks that the tag
