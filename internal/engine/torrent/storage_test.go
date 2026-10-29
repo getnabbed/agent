@@ -3,9 +3,11 @@ package torrent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/storage"
@@ -119,5 +121,80 @@ func TestFileStorageRefusesUnsafePaths(t *testing.T) {
 
 	if _, err := newFileStorage(t.TempDir(), storage.NewMapPieceCompletion()).OpenTorrent(context.Background(), info, metainfo.Hash{1}); err == nil {
 		t.Fatal("got an unsafe path accepted")
+	}
+}
+
+func TestFileStorageCloseWaitsForFileOperations(t *testing.T) {
+	ft := &fileTorrent{}
+
+	// An operation in flight, as when a chunk is being written on another
+	// goroutine when the torrent is dropped.
+	if err := ft.enter(); err != nil {
+		t.Fatal(err)
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		_ = ft.close()
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+		t.Fatal("got close returning while a file operation was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	ft.leave()
+
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("got close still waiting after the file operation ended")
+	}
+}
+
+func TestClosedFileStorageRefusesFileOperations(t *testing.T) {
+	dir := t.TempDir()
+	info := &metainfo.Info{Name: "rel", PieceLength: 4, Pieces: make([]byte, metainfo.HashSize), Length: 4}
+
+	ti, err := newFileStorage(dir, storage.NewMapPieceCompletion()).OpenTorrent(context.Background(), info, metainfo.Hash{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := ti.Piece(info.Piece(0))
+	if _, err := p.WriteAt([]byte("data"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ti.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := p.WriteAt([]byte("DATA"), 0); !errors.Is(err, errStorageClosed) {
+		t.Fatalf("got write err %v after close, want errStorageClosed", err)
+	}
+
+	if _, err := p.ReadAt(make([]byte, 4), 0); !errors.Is(err, errStorageClosed) {
+		t.Fatalf("got read err %v after close, want errStorageClosed", err)
+	}
+
+	if err := p.MarkComplete(); !errors.Is(err, errStorageClosed) {
+		t.Fatalf("got mark complete err %v after close, want errStorageClosed", err)
+	}
+
+	if c := p.Completion(); !errors.Is(c.Err, errStorageClosed) {
+		t.Fatalf("got completion %+v after close, want errStorageClosed", c)
+	}
+
+	// What post-processing does next, and what Windows refuses while any
+	// handle is open.
+	if err := os.RemoveAll(filepath.Join(dir, "rel")); err != nil {
+		t.Fatalf("remove files after close: %v", err)
+	}
+
+	if got, _ := os.ReadFile(filepath.Join(dir, "rel")); got != nil {
+		t.Fatal("got the file written again after close")
 	}
 }
