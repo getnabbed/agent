@@ -246,6 +246,28 @@ Releases are built by [GoReleaser](https://goreleaser.com/) when a `v*` tag
 is pushed. See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution
 workflow.
 
+### Dev images
+
+Every merge to `main` that passes CI publishes a dev image, for testing and
+debugging unreleased changes. Dev images are not releases: don't run them
+for anything you rely on.
+
+```sh
+docker pull ghcr.io/wilderness-cloud/agent:main               # newest main
+docker pull ghcr.io/wilderness-cloud/agent:main-<sha12>       # one commit
+helm upgrade --install nabbed-agent oci://ghcr.io/wilderness-cloud/charts/nabbed-agent \
+  --set image.tag=main --set image.pullPolicy=Always
+```
+
+The agent reports its version as `0.0.0-main.<sha12>`. Dev images are signed
+by the CI workflow on `main`, not the release workflow:
+
+```sh
+cosign verify ghcr.io/wilderness-cloud/agent:main \
+  --certificate-identity https://github.com/wilderness-cloud/agent/.github/workflows/ci.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
 ## License
 
 [MIT](LICENSE)
