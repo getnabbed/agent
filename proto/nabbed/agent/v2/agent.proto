@@ -474,10 +474,21 @@ message InventoryEntry {
   int64 mtime_ms = 4;
 }
 
-// InventoryReport carries at most 500 entries; larger inventories are split.
+// InventoryReport carries at most 500 entries; larger inventories are split
+// across reports of the same scan, sent in order, the final one with last
+// set. A scan interrupted by a restart starts over with the same scan_id, so
+// entries may repeat within a scan: deduplicate by (root_id, relative_path).
 message InventoryReport {
   repeated InventoryEntry entries = 1;
   bool last = 2;
+  // The root scanned. Set on every report, so the last report of an empty
+  // root still names it.
+  string root_id = 3;
+  // The id of the RescanLibrary command that started the scan.
+  string scan_id = 4;
+  // On the last report: some folders could not be read, or the root could
+  // not be scanned at all. Files missing from the scan may still exist.
+  bool incomplete = 5;
 }
 
 message SourceHealth {

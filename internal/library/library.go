@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -24,12 +25,18 @@ const (
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-// Manager stores library roots and the import policy. It holds no state
-// of its own: everything is read from the store when it is used.
+// Manager stores library roots and the import policy, and runs library
+// scans. Roots and the policy are read from the store when they are used;
+// only running scans are held in memory.
 type Manager struct {
 	store  *store.Store
 	policy *Policy
 	log    *slog.Logger
+
+	mu    sync.Mutex
+	base  context.Context // set by RunScans
+	scans map[string]*scanRun
+	wg    sync.WaitGroup
 }
 
 // New returns a Manager.
@@ -38,7 +45,7 @@ func New(st *store.Store, policy *Policy, log *slog.Logger) *Manager {
 		log = slog.Default()
 	}
 
-	return &Manager{store: st, policy: policy, log: log.With("component", "library")}
+	return &Manager{store: st, policy: policy, log: log.With("component", "library"), scans: map[string]*scanRun{}}
 }
 
 // Policy returns the local policy.
@@ -140,6 +147,12 @@ func (m *Manager) Remove(ctx context.Context, tx *store.Tx, id string) error {
 		return fmt.Errorf("delete root: %w", err)
 	}
 
+	if _, err := tx.ExecContext(ctx, "DELETE FROM library_scans WHERE root_id = ?", id); err != nil {
+		return fmt.Errorf("delete scan: %w", err)
+	}
+
+	tx.AfterCommit(func() { m.stopScan(id) })
+
 	m.log.Info("library root removed", "root_id", id)
 
 	return nil
@@ -173,7 +186,8 @@ func downloadsTargeting(ctx context.Context, tx *store.Tx, id string) (int, erro
 	return n, rows.Err()
 }
 
-// Root returns a stored root, or ErrInvalid wrapped when there is none.
+// Root returns a stored root. When there is none the error wraps both
+// ErrInvalid and ErrUnknownRoot.
 func (m *Manager) Root(ctx context.Context, id string) (*pb.LibraryRoot, error) {
 	var (
 		r    pb.LibraryRoot
@@ -184,7 +198,7 @@ func (m *Manager) Root(ctx context.Context, id string) (*pb.LibraryRoot, error) 
 		"SELECT id, kind, path, folder_template, file_template, specials_folder FROM library_roots WHERE id = ?", id).
 		Scan(&r.Id, &kind, &r.Path, &r.FolderTemplate, &r.FileTemplate, &r.SpecialsFolder)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("%w: unknown library root %q", ErrInvalid, id)
+		return nil, fmt.Errorf("%w: %w %q", ErrInvalid, ErrUnknownRoot, id)
 	}
 
 	if err != nil {

@@ -1,7 +1,7 @@
 # 0007: Library import
 
-- **Status:** Accepted, 2026-10-24. Roots, policy, naming, placement and
-  import are implemented. Rescan and inventory, upgrades (`replaces_path`),
+- **Status:** Accepted, 2026-10-24. Roots, policy, naming, placement,
+  import and library scans are implemented. Upgrades (`replaces_path`),
   multi-episode files and season packs are not.
 - **Scope:** How a finished download becomes files in the user's library,
   and the local policy that bounds where the control plane may write.
@@ -43,7 +43,7 @@ library:
 | `RemoveLibraryRoot` | `ROOT_IN_USE` while a download that isn't done or cancelled targets it. An unknown id succeeds, so removals replay. |
 | `SetImportPolicy` | Stores the mode, sanitiser and extras. Before one arrives, the agent uses AUTO with no extras. |
 | `BrowseFilesystem` | `QueryResult.payload` is JSON `{path, entries:[{name, path}], next_page_token}`. It lists folders only, 200 per page, and skips hidden names. With `path: ""` it lists the allowed roots; anything outside them is refused. |
-| `RescanLibrary` | Not implemented (`UNSUPPORTED`). |
+| `RescanLibrary` | `APPLIED` once the root exists (else `UNKNOWN_ID`) and passes the policy check (else `ROOT_NOT_ALLOWED` or `INVALID_ARGUMENT`). The scan runs in the background and reports `InventoryReport` events; see [Library scans](#library-scans). |
 
 ## Naming
 
@@ -123,10 +123,39 @@ resumes at that stage, with the files already on disk: the agent sends
 `DownloadUpdate` IMPORTING (or ASSEMBLING) and nothing is downloaded again.
 A download that failed earlier goes back to QUEUED.
 
+## Library scans
+
+A `RescanLibrary` reports the video files in one root, so the cloud knows
+what the user already has.
+
+- **What's reported:** files with a video extension (the list the importer
+  uses), as `InventoryEntry{root_id, relative_path, size, mtime_ms}`. The
+  path is relative to the root and slash-separated.
+- **What's skipped:**
+  - hidden names;
+  - `sample` and `samples` folders;
+  - unfinished `.nabbed-partial` copies;
+  - the folder of any other configured root, so a TV root inside a movies
+    root is reported only by its own scan.
+- **Symlinks:** a symlinked file is followed only if its target is inside
+  the allowed roots, and a symlinked folder is not followed.
+- **Reports:** at most 500 entries each, queued through the outbox in
+  order. Every report carries `root_id` and `scan_id` (the command's id),
+  and the final one has `last` set. An empty root sends one `last` report
+  with no entries. `incomplete` on the last report means some folders
+  couldn't be read, or the root couldn't be scanned at all, so the cloud
+  must not treat unreported files as deleted.
+- **Restarts and repeats:**
+  - A scan is recorded in `library_scans` with the command. A restart
+    starts it over with the same `scan_id`, so entries may repeat within a
+    scan; the cloud deduplicates by `(root_id, relative_path)`.
+  - A new `RescanLibrary` for the same root cancels the running scan. Its
+    reports stop, and the new scan begins once the old one has stopped.
+  - Removing the root drops its scan.
+- **Only on request:** the agent never scans by itself.
+
 ## Not yet
 
-- **`RescanLibrary` and `InventoryReport`:** video files only, at most 500
-  per event. Agreed, but not built.
 - **`replaces_path`:** delete versus trash for the old file is undecided.
   Until then nothing is deleted.
 - **Multi-episode files, season packs and `SxxEyy` matching:** need a

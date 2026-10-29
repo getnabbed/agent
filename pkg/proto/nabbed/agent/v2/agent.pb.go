@@ -3911,11 +3911,22 @@ func (x *InventoryEntry) GetMtimeMs() int64 {
 	return 0
 }
 
-// InventoryReport carries at most 500 entries; larger inventories are split.
+// InventoryReport carries at most 500 entries; larger inventories are split
+// across reports of the same scan, sent in order, the final one with last
+// set. A scan interrupted by a restart starts over with the same scan_id, so
+// entries may repeat within a scan: deduplicate by (root_id, relative_path).
 type InventoryReport struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Entries       []*InventoryEntry      `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
-	Last          bool                   `protobuf:"varint,2,opt,name=last,proto3" json:"last,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Entries []*InventoryEntry      `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	Last    bool                   `protobuf:"varint,2,opt,name=last,proto3" json:"last,omitempty"`
+	// The root scanned. Set on every report, so the last report of an empty
+	// root still names it.
+	RootId string `protobuf:"bytes,3,opt,name=root_id,json=rootId,proto3" json:"root_id,omitempty"`
+	// The id of the RescanLibrary command that started the scan.
+	ScanId string `protobuf:"bytes,4,opt,name=scan_id,json=scanId,proto3" json:"scan_id,omitempty"`
+	// On the last report: some folders could not be read, or the root could
+	// not be scanned at all. Files missing from the scan may still exist.
+	Incomplete    bool `protobuf:"varint,5,opt,name=incomplete,proto3" json:"incomplete,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3960,6 +3971,27 @@ func (x *InventoryReport) GetEntries() []*InventoryEntry {
 func (x *InventoryReport) GetLast() bool {
 	if x != nil {
 		return x.Last
+	}
+	return false
+}
+
+func (x *InventoryReport) GetRootId() string {
+	if x != nil {
+		return x.RootId
+	}
+	return ""
+}
+
+func (x *InventoryReport) GetScanId() string {
+	if x != nil {
+		return x.ScanId
+	}
+	return ""
+}
+
+func (x *InventoryReport) GetIncomplete() bool {
+	if x != nil {
+		return x.Incomplete
 	}
 	return false
 }
@@ -4654,10 +4686,15 @@ const file_nabbed_agent_v2_agent_proto_rawDesc = "" +
 	"\aroot_id\x18\x01 \x01(\tR\x06rootId\x12#\n" +
 	"\rrelative_path\x18\x02 \x01(\tR\frelativePath\x12\x12\n" +
 	"\x04size\x18\x03 \x01(\x04R\x04size\x12\x19\n" +
-	"\bmtime_ms\x18\x04 \x01(\x03R\amtimeMs\"`\n" +
+	"\bmtime_ms\x18\x04 \x01(\x03R\amtimeMs\"\xb2\x01\n" +
 	"\x0fInventoryReport\x129\n" +
 	"\aentries\x18\x01 \x03(\v2\x1f.nabbed.agent.v2.InventoryEntryR\aentries\x12\x12\n" +
-	"\x04last\x18\x02 \x01(\bR\x04last\"]\n" +
+	"\x04last\x18\x02 \x01(\bR\x04last\x12\x17\n" +
+	"\aroot_id\x18\x03 \x01(\tR\x06rootId\x12\x17\n" +
+	"\ascan_id\x18\x04 \x01(\tR\x06scanId\x12\x1e\n" +
+	"\n" +
+	"incomplete\x18\x05 \x01(\bR\n" +
+	"incomplete\"]\n" +
 	"\fSourceHealth\x12\x1b\n" +
 	"\tsource_id\x18\x01 \x01(\tR\bsourceId\x12\x18\n" +
 	"\ahealthy\x18\x02 \x01(\bR\ahealthy\x12\x16\n" +

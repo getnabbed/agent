@@ -44,10 +44,14 @@ func (a *Applier) setImportPolicy(ctx context.Context, tx *store.Tx, c *pb.SetIm
 	return libraryResult(a.library.SetImportPolicy(ctx, tx, c))
 }
 
-// rescanLibrary starts a scan of a root; results arrive as InventoryReport
-// events.
-func (a *Applier) rescanLibrary(_ context.Context, _ *store.Tx, _ *pb.RescanLibrary) (*pb.CommandResult, error) {
-	return notImplemented("rescan_library"), nil
+// rescanLibrary starts a scan of a root once the command commits. Results
+// arrive as InventoryReport events whose scan_id is the command's id.
+func (a *Applier) rescanLibrary(ctx context.Context, tx *store.Tx, commandID string, c *pb.RescanLibrary) (*pb.CommandResult, error) {
+	if a.library == nil {
+		return notImplemented("rescan_library"), nil
+	}
+
+	return libraryResult(a.library.Rescan(ctx, tx, c.GetRootId(), commandID))
 }
 
 // libraryResult maps library errors to typed rejections. Other errors abort
@@ -60,6 +64,7 @@ func libraryResult(err error) (*pb.CommandResult, error) {
 		{library.ErrNotAllowed, pb.CommandErrorCode_COMMAND_ERROR_CODE_ROOT_NOT_ALLOWED},
 		{library.ErrInUse, pb.CommandErrorCode_COMMAND_ERROR_CODE_ROOT_IN_USE},
 		{library.ErrTemplateUnsafe, pb.CommandErrorCode_COMMAND_ERROR_CODE_TEMPLATE_UNSAFE},
+		{library.ErrUnknownRoot, pb.CommandErrorCode_COMMAND_ERROR_CODE_UNKNOWN_ID},
 		{library.ErrInvalid, pb.CommandErrorCode_COMMAND_ERROR_CODE_INVALID_ARGUMENT},
 		{library.ErrLimit, pb.CommandErrorCode_COMMAND_ERROR_CODE_LIMIT_EXCEEDED},
 	}

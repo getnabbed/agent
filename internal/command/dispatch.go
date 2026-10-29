@@ -42,7 +42,7 @@ func (a *Applier) apply(ctx context.Context, tx *store.Tx, cmd *pb.Command) (*pb
 	case *pb.Command_SetImportPolicy:
 		return a.setImportPolicy(ctx, tx, k.SetImportPolicy)
 	case *pb.Command_RescanLibrary:
-		return a.rescanLibrary(ctx, tx, k.RescanLibrary)
+		return a.rescanLibrary(ctx, tx, cmd.GetId(), k.RescanLibrary)
 
 	// Sources.
 	case *pb.Command_PutSource:

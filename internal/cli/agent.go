@@ -331,6 +331,16 @@ func runRun(ctx context.Context, e *env, args []string) int {
 		_ = sources.Run(runCtx)
 	}()
 
+	// Runs library scans the cloud requests, resuming any a restart cut off.
+	libDone := make(chan struct{})
+	go func() {
+		defer close(libDone)
+
+		if err := lib.RunScans(runCtx); err != nil {
+			e.log.Warn("library scans stopped", "err", err)
+		}
+	}()
+
 	// Housekeeping, so a long-running agent's database stays bounded.
 	go maintain(runCtx, time.Hour, func(ctx context.Context) {
 		applier.Prune(ctx)
@@ -341,6 +351,7 @@ func runRun(ctx context.Context, e *env, args []string) int {
 	stop()
 	<-dlDone
 	<-srcDone
+	<-libDone
 
 	switch {
 	case err == nil:

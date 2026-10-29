@@ -43,6 +43,7 @@ type Library interface {
 	Put(ctx context.Context, tx *store.Tx, r *pb.LibraryRoot) error
 	Remove(ctx context.Context, tx *store.Tx, id string) error
 	SetImportPolicy(ctx context.Context, tx *store.Tx, p *pb.SetImportPolicy) error
+	Rescan(ctx context.Context, tx *store.Tx, rootID, scanID string) error
 	Policy() *library.Policy
 }
 

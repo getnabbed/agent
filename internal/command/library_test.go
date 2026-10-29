@@ -76,6 +76,30 @@ func TestLibraryRootCommands(t *testing.T) {
 	}
 }
 
+func TestRescanLibraryCommand(t *testing.T) {
+	media := t.TempDir()
+	if err := os.Mkdir(filepath.Join(media, "tv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	a := libraryApplier(t, media)
+	rescan := func(id, root string) *pb.CommandResult {
+		return a.HandleCommand(context.Background(), &pb.Command{Id: id, Kind: &pb.Command_RescanLibrary{RescanLibrary: &pb.RescanLibrary{RootId: root}}})
+	}
+
+	if res := rescan("c1", "root-1"); res.GetErrorCode() != pb.CommandErrorCode_COMMAND_ERROR_CODE_UNKNOWN_ID {
+		t.Fatalf("got %v, want UNKNOWN_ID before the root exists", res)
+	}
+
+	if res := a.HandleCommand(context.Background(), putRoot("c2", filepath.Join(media, "tv"))); res.GetOutcome() != pb.CommandOutcome_COMMAND_OUTCOME_APPLIED {
+		t.Fatal(res)
+	}
+
+	if res := rescan("c3", "root-1"); res.GetOutcome() != pb.CommandOutcome_COMMAND_OUTCOME_APPLIED {
+		t.Fatalf("got %v, want APPLIED", res)
+	}
+}
+
 func TestBrowseFilesystemQuery(t *testing.T) {
 	media := t.TempDir()
 	if err := os.Mkdir(filepath.Join(media, "movies"), 0o755); err != nil {
