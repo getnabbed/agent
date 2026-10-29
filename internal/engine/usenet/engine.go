@@ -37,6 +37,8 @@ type Engine struct {
 	log     *slog.Logger
 	hook    atomic.Pointer[func(id string)]
 
+	notifier atomic.Pointer[Notifier]
+
 	mu        sync.Mutex
 	providers []*registered // priority order
 	stop      chan struct{}
@@ -113,6 +115,7 @@ func (e *Engine) SetProvider(id string, p Provider) {
 			(*fn)(id)
 		}
 	}
+	e.watchLimit(id, pl)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -131,6 +134,8 @@ func (e *Engine) SetProvider(id string, p Provider) {
 
 // RemoveProvider removes provider id.
 func (e *Engine) RemoveProvider(id string) {
+	defer e.resolveCapped(id)
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -205,6 +210,19 @@ func (e *Engine) route(sourceID string) []*pool {
 	return append(append(first, primaries...), backups...)
 }
 
+// sourceIDs maps each pool in route to its source id.
+func (e *Engine) sourceIDs(route []*pool) map[*pool]string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	ids := make(map[*pool]string, len(route))
+	for _, r := range e.providers {
+		ids[r.pool] = r.id
+	}
+
+	return ids
+}
+
 // Protocol implements engine.Engine.
 func (e *Engine) Protocol() pb.Protocol { return pb.Protocol_PROTOCOL_USENET }
 
@@ -230,7 +248,7 @@ type workItem struct {
 // Download implements engine.Engine. PAR2 recovery volumes are not
 // downloaded; they are listed in the result's Deferred for FetchFiles.
 func (e *Engine) Download(ctx context.Context, job engine.Job, progress func(engine.Progress)) (*engine.Result, error) {
-	return e.start(ctx, job, checkpointName, func(name string) bool { return !IsPAR2Volume(name) }, progress)
+	return e.start(ctx, job, checkpointName, func(name string) bool { return !IsPAR2Volume(name) }, progress, true)
 }
 
 // FetchFiles downloads the named files of job's NZB into the work
@@ -245,12 +263,12 @@ func (e *Engine) FetchFiles(ctx context.Context, job engine.Job, names []string)
 		want[n] = true
 	}
 
-	return e.start(ctx, job, fetchCheckpointName, func(name string) bool { return want[name] }, nil)
+	return e.start(ctx, job, fetchCheckpointName, func(name string) bool { return want[name] }, nil, false)
 }
 
 // start downloads the files of job's NZB that want accepts, tracking
 // progress in the checkpoint file ckptName.
-func (e *Engine) start(ctx context.Context, job engine.Job, ckptName string, want func(name string) bool, progress func(engine.Progress)) (*engine.Result, error) {
+func (e *Engine) start(ctx context.Context, job engine.Job, ckptName string, want func(name string) bool, progress func(engine.Progress), main bool) (*engine.Result, error) {
 	route := e.route(job.SourceID)
 
 	workers := 0
@@ -296,8 +314,16 @@ func (e *Engine) start(ctx context.Context, job engine.Job, ckptName string, wan
 
 	d := &download{
 		e: e, root: root, data: data, nzb: nzb, route: route, workers: workers, ckpt: ckpt, ckptName: ckptName, want: want,
-		files: map[int]*os.File{},
-		sizes: map[int]int64{},
+		files:  map[int]*os.File{},
+		sizes:  map[int]int64{},
+		ids:    e.sourceIDs(route),
+		served: map[*pool]*atomic.Int64{},
+		notes:  job.Notes,
+		main:   main,
+	}
+
+	for _, pl := range route {
+		d.served[pl] = &atomic.Int64{}
 	}
 
 	for i := range nzb.Files {
@@ -381,6 +407,14 @@ type download struct {
 
 	doneBytes atomic.Int64
 	missing   atomic.Int64
+
+	// ids names each pool's source; served counts the articles each one
+	// supplied in this run, for stats and notes.
+	ids    map[*pool]string
+	served map[*pool]*atomic.Int64
+	notes  *engine.Notes
+	// main is set for a release download, not a fetch of recovery volumes.
+	main bool
 }
 
 func (d *download) run(ctx context.Context, progress func(engine.Progress)) (*engine.Result, error) {
@@ -413,6 +447,8 @@ func (d *download) run(ctx context.Context, progress func(engine.Progress)) (*en
 			work = append(work, workItem{file: i, seg: s, segment: seg})
 		}
 	}
+
+	runStart, runStartAt := d.doneBytes.Load(), time.Now()
 
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -480,11 +516,62 @@ feed:
 
 	result.MissingArticles = int(d.missing.Load())
 
+	// Only the main download reports stats; a fetch of recovery volumes
+	// is part of assembly.
+	if d.main {
+		done := d.doneBytes.Load()
+		result.Stats = &engine.Stats{
+			Bytes: done, RunBytes: done - runStart, DurationMs: time.Since(runStartAt).Milliseconds(), SourceID: d.mostServed(),
+		}
+	}
+
+	if d.main {
+		d.noteRun(result.MissingArticles)
+	}
+
 	if err := d.closeFiles(); err != nil {
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "close: %v", err)
 	}
 
 	return &result, nil
+}
+
+// mostServed returns the source that supplied the most articles this run,
+// or "" when none did.
+func (d *download) mostServed() string {
+	var (
+		best string
+		n    int64
+	)
+
+	for _, pl := range d.route {
+		if c := d.served[pl].Load(); c > n {
+			best, n = d.ids[pl], c
+		}
+	}
+
+	return best
+}
+
+// noteRun notes missing articles and articles that came from a source
+// other than the first one tried.
+func (d *download) noteRun(missing int) {
+	if missing > 0 {
+		d.notes.Warn("usenet.articles_missing", fmt.Sprintf("%d articles were missing from every usenet source", missing), "count", missing)
+	}
+
+	if len(d.route) == 0 {
+		return
+	}
+
+	from := d.ids[d.route[0]]
+
+	for _, pl := range d.route[1:] {
+		if n := d.served[pl].Load(); n > 0 {
+			d.notes.Info("usenet.provider_fallback", fmt.Sprintf("%d articles came from another usenet source", n),
+				"from", from, "to", d.ids[pl], "articles", n)
+		}
+	}
 }
 
 // worker processes segments until items is closed or the run is cancelled.
@@ -520,6 +607,7 @@ func (d *download) fetch(ctx context.Context, it workItem) error {
 	for _, pl := range d.route {
 		err := d.fetchFrom(ctx, pl, it)
 		if err == nil {
+			d.served[pl].Add(1)
 			return nil
 		}
 

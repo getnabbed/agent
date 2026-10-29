@@ -2,7 +2,10 @@ package postproc
 
 import (
 	"bytes"
+	"strings"
 	"testing"
+
+	"github.com/getnabbed/agent/internal/engine"
 )
 
 func TestLooksObfuscated(t *testing.T) {
@@ -53,10 +56,15 @@ func TestObfuscatedMainFileIsNamedAfterTheRelease(t *testing.T) {
 	)
 	j, res := workDir(t, map[string][]byte{"rel.part01.rar": vols[0]})
 	j.Title = "Monkey.Dust.S03E01.Episode.1.SDTV.XviD-MaG-Chamele0n"
+	j.Notes = &engine.Notes{}
 
 	out, err := assemble(j, res)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if a := noted(j)["name.from_release"].GetAttrs(); a["to"] == "" || strings.Contains(a["from"], "/") {
+		t.Fatalf("got name.from_release attrs %v, want base names", a)
 	}
 
 	want := "extracted/Monkey.Dust.S03E01.Episode.1.SDTV.XviD-MaG-Chamele0n.avi," +

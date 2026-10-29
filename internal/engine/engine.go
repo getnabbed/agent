@@ -30,6 +30,9 @@ type Job struct {
 	// and only used, sanitised, to name files whose own names are
 	// obfuscated.
 	Title string
+	// Notes collects what the stage did worth showing the user. It may
+	// be nil.
+	Notes *Notes
 }
 
 // Progress is reported by engines while downloading, at most about once a
@@ -56,6 +59,41 @@ type Result struct {
 	// Deferred lists files deliberately not downloaded, such as PAR2
 	// recovery volumes fetched only if repair needs them.
 	Deferred []string `json:"deferred,omitempty"`
+	// Stats summarise the transfer, for DownloadUpdate.stats.
+	Stats *Stats `json:"stats,omitempty"`
+}
+
+// Stats summarise a finished transfer.
+type Stats struct {
+	// Bytes is the payload downloaded, including any from earlier runs.
+	Bytes int64 `json:"bytes"`
+	// Duration is the time the final run took, in milliseconds.
+	DurationMs int64 `json:"duration_ms"`
+	// RunBytes is what the final run transferred, for the average speed.
+	RunBytes int64 `json:"run_bytes"`
+	// SourceID is the usenet source that served most articles.
+	SourceID string `json:"source_id,omitempty"`
+	// Peers counts distinct torrent peers seen.
+	Peers int `json:"peers,omitempty"`
+}
+
+// Proto converts s for the wire, with the average speed of the final run
+// and missing, the usenet articles that couldn't be fetched.
+func (s *Stats) Proto(missing int) *pb.DownloadStats {
+	if s == nil {
+		return nil
+	}
+
+	ps := &pb.DownloadStats{
+		Bytes: uint64(max(s.Bytes, 0)), DurationMs: uint64(max(s.DurationMs, 0)), SourceId: s.SourceID,
+		MissingArticles: uint32(max(missing, 0)), Peers: uint32(max(s.Peers, 0)),
+	}
+
+	if s.DurationMs > 0 {
+		ps.AvgBps = uint64(max(s.RunBytes, 0) * 1000 / s.DurationMs)
+	}
+
+	return ps
 }
 
 // Engine downloads one protocol.

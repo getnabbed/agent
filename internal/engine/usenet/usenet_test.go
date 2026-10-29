@@ -229,6 +229,7 @@ func TestDownloadAssemblesFiles(t *testing.T) {
 func TestMissingArticleIsReportedNotFatal(t *testing.T) {
 	s := newFakeNNTP(t, "", "")
 	job, _ := buildJob(t, s, map[string][]byte{"a.bin": randBytes(50_000)}, 10_000, map[string]bool{"a.bin-3@test": true})
+	job.Notes = &engine.Notes{}
 
 	res, err := newTestEngine(t, s.provider("", "", 2)).Download(context.Background(), job, nil)
 	if err != nil {
@@ -237,6 +238,11 @@ func TestMissingArticleIsReportedNotFatal(t *testing.T) {
 
 	if res.MissingArticles != 1 || len(res.Files) != 1 || res.Files[0].Size != 50_000 {
 		t.Fatalf("result = %+v", res)
+	}
+
+	notes := job.Notes.Drain()
+	if len(notes) != 1 || notes[0].GetCode() != "usenet.articles_missing" || notes[0].GetAttrs()["count"] != "1" {
+		t.Fatalf("got notes %v, want one note for the missing article", notes)
 	}
 }
 

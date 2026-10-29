@@ -151,7 +151,7 @@ func (m *Manager) Act(ctx context.Context, tx *store.Tx, action Action, id strin
 		}
 	}
 
-	if _, err := transition(ctx, tx, id, r.State, to, nil); err != nil {
+	if _, err := transition(ctx, tx, id, r.State, to, nil, extra{}); err != nil {
 		return err
 	}
 

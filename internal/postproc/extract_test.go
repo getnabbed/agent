@@ -235,6 +235,7 @@ func TestExtractsMultiVolumeRAR(t *testing.T) {
 		"rel.part1.rar": vols[0], "rel.part2.rar": vols[1], "rel.part3.rar": vols[2],
 		"rel.nfo": []byte("about"),
 	})
+	j.Notes = &engine.Notes{}
 
 	out, err := assemble(j, res)
 	if err != nil {
@@ -243,6 +244,10 @@ func TestExtractsMultiVolumeRAR(t *testing.T) {
 
 	if got := paths(out); got != "data/rel.nfo,extracted/Movie/movie.mkv" {
 		t.Fatalf("got files %s, want the nfo and the extracted movie", got)
+	}
+
+	if a := noted(j)["extract.done"].GetAttrs(); a["archive"] != "rel.part1.rar" || a["volumes"] != "3" || a["kind"] != "rar" {
+		t.Fatalf("got extract.done attrs %v, want the 3-volume RAR", a)
 	}
 
 	if !bytes.Equal(readOut(t, j, "extracted/Movie/movie.mkv"), movie) {
@@ -270,6 +275,7 @@ func TestRARSkipsLinksAndUnsafePaths(t *testing.T) {
 		rarEntry{name: "/abs/CON", data: []byte("y")},
 	)
 	j, res := workDir(t, map[string][]byte{"rel.rar": vols[0]})
+	j.Notes = &engine.Notes{}
 
 	out, err := assemble(j, res)
 	if err != nil {
@@ -278,6 +284,10 @@ func TestRARSkipsLinksAndUnsafePaths(t *testing.T) {
 
 	if got := paths(out); got != "extracted/Sub/ok.srt,extracted/abs/file-3" {
 		t.Fatalf("got files %s, want only the safe entries", got)
+	}
+
+	if n := noted(j)["extract.entries_skipped"]; n.GetSeverity() != pb.Severity_SEVERITY_WARNING || n.GetAttrs()["count"] != "2" {
+		t.Fatalf("got %v, want a warning for the 2 skipped entries", n)
 	}
 
 	if exists(j, "../escape.txt") || exists(j, "escape.txt") || exists(j, "extracted/link") {

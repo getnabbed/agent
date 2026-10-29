@@ -92,14 +92,29 @@ func (im *Importer) Import(ctx context.Context, job engine.Job, res *engine.Resu
 	done := &pb.ImportCompleted{DownloadId: d.GetId(), RootId: root.GetId(), Quality: d.GetRelease().GetQuality()}
 	torrent := d.GetRelease().GetProtocol() == pb.Protocol_PROTOCOL_TORRENT
 
+	var methods []string
+
 	for _, p := range plan {
-		size, err := im.place(ctx, job, root, policy.GetMode(), torrent, p, log)
+		size, method, err := im.place(ctx, job, root, policy.GetMode(), torrent, p, log)
 		if err != nil {
 			return nil, err
 		}
 
+		if method != "" && !slices.Contains(methods, method) {
+			methods = append(methods, method)
+		}
+
 		done.Files = append(done.Files, &pb.ImportedFile{RelativePath: p.rel, Size: uint64(max(size, 0))})
 	}
+
+	// A rerun after a crash placed nothing itself, and has no method to note.
+	if len(methods) > 0 {
+		how := strings.Join(methods, ", ")
+		job.Notes.Info("import.placed", fmt.Sprintf("Placed %d files in the library by %s", len(done.Files), how),
+			"method", how, "files", len(done.Files))
+	}
+
+	im.Library.RootUsed(ctx, root.GetId())
 
 	if err := writeImportMarker(job.Dir, done); err != nil {
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "record import: %v", err)
@@ -115,7 +130,7 @@ type placed struct {
 	replace  bool
 }
 
-func (im *Importer) place(ctx context.Context, job engine.Job, root *pb.LibraryRoot, mode pb.ImportMode, torrent bool, p placed, log *slog.Logger) (int64, error) {
+func (im *Importer) place(ctx context.Context, job engine.Job, root *pb.LibraryRoot, mode pb.ImportMode, torrent bool, p placed, log *slog.Logger) (int64, string, error) {
 	src := filepath.Join(job.Dir, filepath.FromSlash(p.src))
 	dst := filepath.Join(root.GetPath(), filepath.FromSlash(p.rel))
 
@@ -123,30 +138,33 @@ func (im *Importer) place(ctx context.Context, job engine.Job, root *pb.LibraryR
 	if errors.Is(err, fs.ErrNotExist) {
 		// A rerun after a crash: the move already happened.
 		if dfi, derr := os.Stat(dst); derr == nil && dfi.Mode().IsRegular() {
-			return dfi.Size(), nil
+			return dfi.Size(), "", nil
 		}
 	}
 
 	if err != nil {
-		return 0, engine.Fail(pb.FailureClass_FAILURE_CLASS_IMPORT, false, "downloaded file %s is missing", p.src)
+		return 0, "", engine.Fail(pb.FailureClass_FAILURE_CLASS_IMPORT, false, "downloaded file %s is missing", p.src)
 	}
 
 	method, err := im.Library.Policy().Place(ctx, Placement{Src: src, Root: root.GetPath(), Rel: p.rel, Mode: mode, Torrent: torrent, Replace: p.replace})
+	if err != nil {
+		im.Library.RootFailed(ctx, root.GetId(), err)
+	}
 
 	switch {
 	case err == nil:
 		log.Debug("placed file", "from", p.src, "to", p.rel, "method", method)
-		return fi.Size(), nil
+		return fi.Size(), method, nil
 	case ctx.Err() != nil:
-		return 0, ctx.Err()
+		return 0, "", ctx.Err()
 	case errors.Is(err, ErrExists):
-		return 0, engine.Fail(pb.FailureClass_FAILURE_CLASS_IMPORT, false, "%s already exists in the library; remove it or pick another release", p.rel)
+		return 0, "", engine.Fail(pb.FailureClass_FAILURE_CLASS_IMPORT, false, "%s already exists in the library; remove it or pick another release", p.rel)
 	case errors.Is(err, ErrNotAllowed), errors.Is(err, ErrInvalid), errors.Is(err, ErrTemplateUnsafe):
 		// The local policy or the root changed; fixable without a new release.
-		return 0, engine.Fail(pb.FailureClass_FAILURE_CLASS_IMPORT, true, "%v", err)
+		return 0, "", engine.Fail(pb.FailureClass_FAILURE_CLASS_IMPORT, true, "%v", err)
 	}
 
-	return 0, engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "place %s: %v", p.rel, err)
+	return 0, "", engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "place %s: %v", p.rel, err)
 }
 
 // pickFiles returns the main video, the largest video file, and the

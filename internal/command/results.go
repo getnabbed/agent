@@ -20,3 +20,9 @@ func rejected(code pb.CommandErrorCode, msg string) *pb.CommandResult {
 func notImplemented(kind string) *pb.CommandResult {
 	return rejected(pb.CommandErrorCode_COMMAND_ERROR_CODE_UNSUPPORTED, kind+" is not implemented in this agent build")
 }
+
+// capped is the result for a command applied only in part, or with other
+// values than asked, because of a local limit. msg says what is in effect.
+func capped(msg string) *pb.CommandResult {
+	return &pb.CommandResult{Outcome: pb.CommandOutcome_COMMAND_OUTCOME_APPLIED_CAPPED, Message: msg}
+}

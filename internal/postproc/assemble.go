@@ -105,7 +105,7 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 			return nil, err
 		}
 
-		return a.unpack(ctx, root, job.Title, files, par2Files, log)
+		return a.unpack(ctx, root, job, files, par2Files, log)
 	}
 
 	p, set, err := readSet(root, index)
@@ -116,7 +116,7 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 			return nil, err
 		}
 
-		return a.unpack(ctx, root, job.Title, files, par2Files, log)
+		return a.unpack(ctx, root, job, files, par2Files, log)
 	}
 
 	dir := path.Dir(index[0])
@@ -143,6 +143,9 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 	}
 
 	renamed := a.restoreNames(root, rep, targets, log)
+	if len(renamed) > 0 {
+		job.Notes.Info("name.restored", fmt.Sprintf("Restored %d obfuscated file names from PAR2", len(renamed)), "count", len(renamed))
+	}
 
 	current := make([]string, 0, len(files))
 	for _, f := range files {
@@ -155,7 +158,8 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 
 	if rep.Complete() {
 		log.Info("par2 verification passed", "files", len(rep.Files), "renamed", len(renamed))
-		return a.unpack(ctx, root, job.Title, current, par2Files, log)
+		job.Notes.Info("par2.verified", fmt.Sprintf("PAR2 verified %d files", len(rep.Files)), "files", len(rep.Files))
+		return a.unpack(ctx, root, job, current, par2Files, log)
 	}
 
 	// Repair works on the files where they are now.
@@ -187,7 +191,7 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 		}
 	}
 
-	return a.unpack(ctx, root, job.Title, files, par2Files, log)
+	return a.unpack(ctx, root, job, files, par2Files, log)
 }
 
 // withoutPar2 decides a release that has no usable PAR2 index: it can

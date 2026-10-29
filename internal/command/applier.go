@@ -47,6 +47,12 @@ type Library interface {
 	Policy() *library.Policy
 }
 
+// Settings stores agent settings. *hoststats.Monitor implements it.
+type Settings interface {
+	// SetHostStats turns HostStats telemetry on or off as part of tx.
+	SetHostStats(ctx context.Context, tx *store.Tx, on bool) error
+}
+
 // Config configures an Applier.
 type Config struct {
 	Store *store.Store
@@ -62,7 +68,10 @@ type Config struct {
 	// Library is optional; without it library commands are rejected as not
 	// implemented.
 	Library Library
-	Log     *slog.Logger
+	// Settings is optional; without it SetAgentSettings is rejected as not
+	// implemented.
+	Settings Settings
+	Log      *slog.Logger
 }
 
 // Applier dispatches commands to their handlers inside a store transaction.
@@ -72,6 +81,7 @@ type Applier struct {
 	downloads Downloads
 	sources   Sources
 	library   Library
+	settings  Settings
 	log       *slog.Logger
 }
 
@@ -85,7 +95,7 @@ func New(cfg Config) *Applier {
 		cfg.Log = slog.Default()
 	}
 
-	return &Applier{store: cfg.Store, clock: cfg.Clock, downloads: cfg.Downloads, sources: cfg.Sources, library: cfg.Library, log: cfg.Log.With("component", "command")}
+	return &Applier{store: cfg.Store, clock: cfg.Clock, downloads: cfg.Downloads, sources: cfg.Sources, library: cfg.Library, settings: cfg.Settings, log: cfg.Log.With("component", "command")}
 }
 
 // HandleCommand implements link.Handler. The state change and the recorded

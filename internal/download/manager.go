@@ -321,7 +321,9 @@ func (m *Manager) run(ctx context.Context, id string) {
 
 		log.Debug("stage", "state", r.State)
 
-		res, ev, err := m.safeStage(ctx, r)
+		notes := &engine.Notes{}
+
+		res, ev, err := m.safeStage(ctx, r, notes)
 		if err != nil {
 			if ctx.Err() != nil {
 				return // paused, cancelled or shutting down: state stays as the command left it
@@ -332,14 +334,30 @@ func (m *Manager) run(ctx context.Context, id string) {
 			log.Warn("download failed", "state", r.State, "class", f.Class, "retryable", f.Retryable, "detail", f.Detail)
 
 			m.update(ctx, func(tx *store.Tx) error {
-				_, err := transition(ctx, tx, id, r.State, Failed, f)
+				_, err := transition(ctx, tx, id, r.State, Failed, f, extra{notes: m.redactNotes(r.ID, notes.Drain())})
 				return err
 			})
 
 			return
 		}
 
+		// Later stages return a new result; the transfer's stats carry over.
+		if res != nil && res.Stats == nil && r.Result != nil {
+			res.Stats = r.Result.Stats
+		}
+
 		to, _ := next(r.State)
+		x := extra{notes: m.redactNotes(r.ID, notes.Drain())}
+
+		if r.State == Downloading || to == Done {
+			if s := res; s != nil || r.Result != nil {
+				if s == nil {
+					s = r.Result
+				}
+
+				x.stats = s.Stats.Proto(s.MissingArticles)
+			}
+		}
 
 		var moved bool
 		m.update(ctx, func(tx *store.Tx) error {
@@ -358,7 +376,7 @@ func (m *Manager) run(ctx context.Context, id string) {
 			}
 
 			var err error
-			moved, err = transition(ctx, tx, id, r.State, to, nil)
+			moved, err = transition(ctx, tx, id, r.State, to, nil, x)
 
 			return err
 		})
@@ -378,8 +396,9 @@ func (m *Manager) update(ctx context.Context, fn func(*store.Tx) error) {
 
 // stage does the work of r.State. A non-nil result is stored, and a non-nil
 // event queued, with the transition.
-func (m *Manager) stage(ctx context.Context, r *row) (*engine.Result, *pb.Event, error) {
+func (m *Manager) stage(ctx context.Context, r *row, notes *engine.Notes) (*engine.Result, *pb.Event, error) {
 	job := m.job(r)
+	job.Notes = notes
 
 	switch r.State {
 	case Queued:
@@ -390,7 +409,7 @@ func (m *Manager) stage(ctx context.Context, r *row) (*engine.Result, *pb.Event,
 			return nil, nil, nil // magnet: nothing to fetch
 		}
 
-		return nil, nil, fetchPayload(ctx, m.cfg.Fetcher, ref, job.Dir, payloadName(ref.GetKind()))
+		return nil, nil, fetchPayload(ctx, m.cfg.Fetcher, ref, job.Dir, payloadName(ref.GetKind()), job.Notes)
 	case Downloading:
 		e, ok := m.engines[r.Protocol]
 		if !ok || !e.Available() {
@@ -474,7 +493,7 @@ func defaultClass(s State) pb.FailureClass {
 // this download, so one hostile input cannot take down the agent. Panics in
 // goroutines an engine starts itself cannot be caught here; engines must
 // validate input before handing it to libraries.
-func (m *Manager) safeStage(ctx context.Context, r *row) (res *engine.Result, ev *pb.Event, err error) {
+func (m *Manager) safeStage(ctx context.Context, r *row, notes *engine.Notes) (res *engine.Result, ev *pb.Event, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			m.log.Error("panic in download stage", "download_id", r.ID, "state", r.State,
@@ -484,7 +503,20 @@ func (m *Manager) safeStage(ctx context.Context, r *row) (res *engine.Result, ev
 		}
 	}()
 
-	return m.stage(ctx, r)
+	return m.stage(ctx, r, notes)
+}
+
+// redactNotes removes host paths from notes before they leave the host.
+func (m *Manager) redactNotes(id string, notes []*pb.Note) []*pb.Note {
+	for _, n := range notes {
+		n.Message = m.redact(id, n.GetMessage())
+
+		for k, v := range n.GetAttrs() {
+			n.Attrs[k] = m.redact(id, v)
+		}
+	}
+
+	return notes
 }
 
 // maxDetailBytes caps failure text sent to the cloud.

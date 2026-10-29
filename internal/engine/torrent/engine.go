@@ -181,13 +181,21 @@ func (e *Engine) Download(ctx context.Context, job engine.Job, progress func(eng
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_PAYLOAD, false, "%v", err)
 	}
 
+	startBytes, startAt := t.BytesCompleted(), time.Now()
+
 	t.DownloadAll()
 
 	if err := e.await(ctx, t, progress); err != nil {
 		return nil, err
 	}
 
-	return &engine.Result{Files: files}, nil
+	st := t.Stats()
+	stats := &engine.Stats{
+		Bytes: t.Length(), RunBytes: t.Length() - startBytes, DurationMs: time.Since(startAt).Milliseconds(),
+		Peers: st.TotalPeers,
+	}
+
+	return &engine.Result{Files: files, Stats: stats}, nil
 }
 
 func (e *Engine) spec(job engine.Job) (*torrent.TorrentSpec, error) {

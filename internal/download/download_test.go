@@ -63,6 +63,9 @@ func (f *fakeEngine) Download(ctx context.Context, job engine.Job, progress func
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case err := <-f.release:
+		// The work dir in a note must not leave the host.
+		job.Notes.Warn("fake.ran", "wrote to "+job.Dir, "dir", job.Dir)
+
 		if err != nil {
 			return nil, err
 		}
@@ -71,7 +74,9 @@ func (f *fakeEngine) Download(ctx context.Context, job engine.Job, progress func
 			return nil, err
 		}
 
-		return &engine.Result{Files: []engine.File{{Path: "out.bin", Size: 4}}}, nil
+		stats := &engine.Stats{Bytes: 4, RunBytes: 4, DurationMs: 2000, SourceID: "src-1"}
+
+		return &engine.Result{Files: []engine.File{{Path: "out.bin", Size: 4}}, Stats: stats}, nil
 	}
 }
 
@@ -81,7 +86,9 @@ type okImporter struct {
 	failNext atomic.Bool
 }
 
-func (o *okImporter) Import(_ context.Context, _ engine.Job, _ *engine.Result, d *pb.Download) (*pb.ImportCompleted, error) {
+func (o *okImporter) Import(_ context.Context, job engine.Job, _ *engine.Result, d *pb.Download) (*pb.ImportCompleted, error) {
+	job.Notes.Info("import.placed", "Placed 1 files in the library by rename", "method", "rename")
+
 	if o.failNext.CompareAndSwap(true, false) {
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_IMPORT, true, "library root is not set up")
 	}
@@ -283,6 +290,89 @@ func TestHappyPathWalksEveryStage(t *testing.T) {
 	}
 }
 
+// downloadUpdates returns the DownloadUpdate events for id, in order.
+func (h *harness) downloadUpdates(t *testing.T, id string) []*pb.DownloadUpdate {
+	t.Helper()
+
+	_, events, _, err := h.st.PendingEvents(context.Background(), 0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out []*pb.DownloadUpdate
+
+	for _, ev := range events {
+		if u := ev.GetDownloadUpdate(); u.GetDownloadId() == id {
+			out = append(out, u)
+		}
+	}
+
+	return out
+}
+
+func TestUpdatesCarryTheStageNotesAndStats(t *testing.T) {
+	h := newHarness(t, 2)
+
+	if err := h.start(torrentDownload("d1")); err != nil {
+		t.Fatal(err)
+	}
+
+	h.waitStarted()
+	h.eng.release <- nil
+	h.waitState("d1", Done)
+
+	byState := map[State]*pb.DownloadUpdate{}
+	for _, u := range h.downloadUpdates(t, "d1") {
+		byState[u.GetState()] = u
+	}
+
+	// Leaving DOWNLOADING: the engine's note, redacted, and the stats.
+	asm := byState[Assembling]
+	if len(asm.GetNotes()) != 1 || asm.GetNotes()[0].GetCode() != "fake.ran" || asm.GetNotes()[0].GetSeverity() != pb.Severity_SEVERITY_WARNING {
+		t.Fatalf("got notes %v leaving DOWNLOADING", asm.GetNotes())
+	}
+
+	if n := asm.GetNotes()[0]; strings.Contains(n.GetMessage(), h.m.workDir("d1")) || strings.Contains(n.GetAttrs()["dir"], h.m.workDir("d1")) {
+		t.Fatalf("got the work dir in %v, want it redacted", n)
+	}
+
+	s := asm.GetStats()
+	if s.GetBytes() != 4 || s.GetDurationMs() != 2000 || s.GetAvgBps() != 2 || s.GetSourceId() != "src-1" {
+		t.Fatalf("got stats %v leaving DOWNLOADING", s)
+	}
+
+	// DONE: the importer's note, and the stats again, carried past assembly.
+	done := byState[Done]
+	if len(done.GetNotes()) != 1 || done.GetNotes()[0].GetCode() != "import.placed" || done.GetStats().GetBytes() != 4 {
+		t.Fatalf("got %v on DONE, want the import note and the stats", done)
+	}
+
+	for _, st := range []State{Queued, Fetching, Downloading, Importing} {
+		if u := byState[st]; len(u.GetNotes()) != 0 || u.GetStats() != nil {
+			t.Fatalf("got %v on %s, want no notes or stats", u, stateName(st))
+		}
+	}
+}
+
+func TestAFailedStageStillSendsItsNotes(t *testing.T) {
+	h := newHarness(t, 2)
+
+	if err := h.start(torrentDownload("d1")); err != nil {
+		t.Fatal(err)
+	}
+
+	h.waitStarted()
+	h.eng.release <- engine.Fail(pb.FailureClass_FAILURE_CLASS_INCOMPLETE, true, "no peers")
+	h.waitState("d1", Failed)
+
+	ups := h.downloadUpdates(t, "d1")
+	last := ups[len(ups)-1]
+
+	if last.GetState() != Failed || len(last.GetNotes()) != 1 || last.GetNotes()[0].GetCode() != "fake.ran" {
+		t.Fatalf("got %v, want FAILED with the stage's note", last)
+	}
+}
+
 func TestStartIsIdempotentAndValidated(t *testing.T) {
 	h := newHarness(t, 1)
 
@@ -450,7 +540,7 @@ func TestRecoversInterruptedDownload(t *testing.T) {
 			return err
 		}
 
-		_, err := transition(context.Background(), tx, "d1", Queued, Downloading, nil)
+		_, err := transition(context.Background(), tx, "d1", Queued, Downloading, nil, extra{})
 
 		return err
 	})
@@ -516,7 +606,7 @@ func TestHTTPFetcherVerifiesPayload(t *testing.T) {
 	dir := t.TempDir()
 
 	ref := &pb.PayloadRef{Id: "ok", Sha256: sum[:], Size: uint64(len(body)), Kind: pb.PayloadKind_PAYLOAD_KIND_NZB}
-	if err := fetchPayload(context.Background(), f, ref, dir, "payload.nzb"); err != nil {
+	if err := fetchPayload(context.Background(), f, ref, dir, "payload.nzb", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -528,17 +618,17 @@ func TestHTTPFetcherVerifiesPayload(t *testing.T) {
 	tampered := &pb.PayloadRef{Id: "ok", Sha256: make([]byte, 32), Size: uint64(len(body))}
 
 	var fail *engine.Failure
-	if err := fetchPayload(context.Background(), f, tampered, t.TempDir(), "p"); !errors.As(err, &fail) || fail.Retryable {
+	if err := fetchPayload(context.Background(), f, tampered, t.TempDir(), "p", nil); !errors.As(err, &fail) || fail.Retryable {
 		t.Fatalf("hash mismatch err = %v, want non-retryable failure", err)
 	}
 
 	gone := &pb.PayloadRef{Id: "gone", Sha256: sum[:], Size: uint64(len(body))}
-	if err := fetchPayload(context.Background(), f, gone, t.TempDir(), "p"); !errors.As(err, &fail) || fail.Retryable || fail.Class != pb.FailureClass_FAILURE_CLASS_PAYLOAD {
+	if err := fetchPayload(context.Background(), f, gone, t.TempDir(), "p", nil); !errors.As(err, &fail) || fail.Retryable || fail.Class != pb.FailureClass_FAILURE_CLASS_PAYLOAD {
 		t.Fatalf("410 err = %v, want non-retryable PAYLOAD failure", err)
 	}
 
 	oversized := &pb.PayloadRef{Id: "ok", Sha256: sum[:], Size: 4}
-	if err := fetchPayload(context.Background(), f, oversized, t.TempDir(), "p"); !errors.As(err, &fail) || fail.Retryable {
+	if err := fetchPayload(context.Background(), f, oversized, t.TempDir(), "p", nil); !errors.As(err, &fail) || fail.Retryable {
 		t.Fatalf("oversize err = %v, want non-retryable failure", err)
 	}
 }
@@ -583,7 +673,7 @@ func TestUnfinishedLimitAndSpecSize(t *testing.T) {
 				return err
 			}
 
-			if _, err := transition(context.Background(), tx, d.GetId(), Queued, Failed, nil); err != nil {
+			if _, err := transition(context.Background(), tx, d.GetId(), Queued, Failed, nil, extra{}); err != nil {
 				return err
 			}
 		}
@@ -679,7 +769,7 @@ func TestPayloadRedirectPolicy(t *testing.T) {
 	f := &HTTPFetcher{API: u, Client: api.Client(), Tokens: &staticTokens{}}
 
 	ref := &pb.PayloadRef{Id: "elsewhere", Sha256: sum[:], Size: uint64(len(body))}
-	if err := fetchPayload(context.Background(), f, ref, t.TempDir(), "p"); err != nil {
+	if err := fetchPayload(context.Background(), f, ref, t.TempDir(), "p", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -688,7 +778,7 @@ func TestPayloadRedirectPolicy(t *testing.T) {
 	}
 
 	ref.Id = "downgrade"
-	if err := fetchPayload(context.Background(), f, ref, t.TempDir(), "p"); err == nil {
+	if err := fetchPayload(context.Background(), f, ref, t.TempDir(), "p", nil); err == nil {
 		t.Fatal("https to http redirect was followed")
 	}
 }

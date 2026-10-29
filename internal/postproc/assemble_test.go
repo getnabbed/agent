@@ -60,6 +60,16 @@ func assemble(j engine.Job, res *engine.Result) (*engine.Result, error) {
 	return (&Assembler{Log: quiet}).Assemble(context.Background(), j, res)
 }
 
+// noted drains j's notes and returns them by code.
+func noted(j engine.Job) map[string]*pb.Note {
+	out := map[string]*pb.Note{}
+	for _, n := range j.Notes.Drain() {
+		out[n.GetCode()] = n
+	}
+
+	return out
+}
+
 func paths(res *engine.Result) string {
 	var p []string
 	for _, f := range res.Files {
@@ -71,6 +81,7 @@ func paths(res *engine.Result) string {
 
 func TestRestoresObfuscatedNames(t *testing.T) {
 	j, res := job(t, map[string][]byte{"a8f3k2b9": seq(40000), "x91mq": seq(300)})
+	j.Notes = &engine.Notes{}
 
 	out, err := assemble(j, res)
 	if err != nil {
@@ -79,6 +90,11 @@ func TestRestoresObfuscatedNames(t *testing.T) {
 
 	if got := paths(out); got != "data/movie.mkv,data/movie.nfo" {
 		t.Fatalf("got files %s, want the real names and the par2 index removed", got)
+	}
+
+	notes := noted(j)
+	if notes["name.restored"].GetAttrs()["count"] != "2" || notes["par2.verified"].GetAttrs()["files"] != "2" {
+		t.Fatalf("got notes %v, want 2 names restored and 2 files verified", notes)
 	}
 
 	got, err := os.ReadFile(filepath.Join(j.Dir, "data", "movie.mkv"))
