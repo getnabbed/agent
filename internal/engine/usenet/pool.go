@@ -54,6 +54,13 @@ type pool struct {
 	// onChange is called, without mu held, after health changes. It must not
 	// block.
 	onChange func()
+	// onCapped is called, without mu held, when the provider refuses
+	// connections below the configured number; onFull once the pool first
+	// holds the configured number. Either may be nil.
+	onCapped func(configured, using int)
+	onFull   func()
+	fullSeen bool
+	dialing  int // slots in open still being dialled
 	closed   bool
 	changed  chan struct{}
 }
@@ -150,6 +157,8 @@ func (pl *pool) tryGet() (*conn, <-chan struct{}, error) {
 
 	if pl.open < pl.limit && !now.Before(pl.retryAt) {
 		pl.open++
+		pl.dialing++
+
 		return nil, nil, nil
 	}
 
@@ -162,20 +171,28 @@ func (pl *pool) dialSlot(ctx context.Context) (*conn, error) {
 	c, err := pl.dial(ctx)
 
 	// Registered first so it runs after the unlock below.
-	changed := false
+	changed, full, capped := false, false, 0
 	defer func() {
 		if changed {
 			pl.notify()
 		}
+
+		pl.reportLimit(full, capped)
 	}()
 
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
 	defer pl.signal()
 
+	pl.dialing--
+
 	if err == nil {
 		pl.failures = 0
 		changed = pl.setHealth(Health{State: HealthOK})
+
+		if !pl.learned && !pl.fullSeen && pl.open-pl.dialing >= pl.p.Connections {
+			pl.fullSeen, full = true, true
+		}
 
 		return c, nil
 	}
@@ -197,6 +214,7 @@ func (pl *pool) dialSlot(ctx context.Context) (*conn, error) {
 		if !pl.learned || pl.open < pl.limit {
 			pl.log.Warn("usenet provider allows fewer connections than configured; using fewer",
 				"configured", pl.p.Connections, "using", pl.open)
+			capped = pl.open
 		}
 
 		pl.limit, pl.learned = pl.open, true
@@ -314,4 +332,15 @@ func waitFor(ctx context.Context, wake <-chan struct{}, delay time.Duration) err
 	}
 
 	return nil
+}
+
+// reportLimit calls the limit hooks. Call it without mu held.
+func (pl *pool) reportLimit(full bool, capped int) {
+	if full && pl.onFull != nil {
+		pl.onFull()
+	}
+
+	if capped > 0 && pl.onCapped != nil {
+		pl.onCapped(pl.p.Connections, capped)
+	}
 }

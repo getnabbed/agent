@@ -37,6 +37,8 @@ type Engine struct {
 	log     *slog.Logger
 	hook    atomic.Pointer[func(id string)]
 
+	notifier atomic.Pointer[Notifier]
+
 	mu        sync.Mutex
 	providers []*registered // priority order
 	stop      chan struct{}
@@ -113,6 +115,7 @@ func (e *Engine) SetProvider(id string, p Provider) {
 			(*fn)(id)
 		}
 	}
+	e.watchLimit(id, pl)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -131,6 +134,8 @@ func (e *Engine) SetProvider(id string, p Provider) {
 
 // RemoveProvider removes provider id.
 func (e *Engine) RemoveProvider(id string) {
+	defer e.resolveCapped(id)
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
