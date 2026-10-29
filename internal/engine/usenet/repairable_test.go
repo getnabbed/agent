@@ -36,7 +36,7 @@ func TestReleaseBeyondRepairStopsEarly(t *testing.T) {
 
 	var f *engine.Failure
 	if !errors.As(err, &f) || f.Class != pb.FailureClass_FAILURE_CLASS_INCOMPLETE || f.Retryable ||
-		!strings.Contains(f.Detail, "more than the release's PAR2 recovery volumes") {
+		!strings.Contains(f.Detail, "more than the release's PAR2 files") {
 		t.Fatalf("got %v, want a permanent INCOMPLETE failure saying the release cannot be repaired", err)
 	}
 
@@ -112,6 +112,76 @@ func TestHumanBytes(t *testing.T) {
 	} {
 		if got := humanBytes(n); got != want {
 			t.Fatalf("got humanBytes(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+func TestDashNamedRecoveryVolumesCount(t *testing.T) {
+	// Real releases name volumes name.vol-01.par2, which the deferral
+	// pattern does not recognise. Their data must still count as recovery,
+	// or a repairable release fails at its first missing article.
+	s := newFakeNNTP(t, "", "")
+	job, _ := buildJob(t, s, map[string][]byte{
+		"movie.mkv":         randBytes(100_000),
+		"movie.par2":        randBytes(1_000),
+		"movie.vol-01.par2": randBytes(15_000),
+		"movie.vol-02.par2": randBytes(15_000),
+	}, 10_000, map[string]bool{"movie.mkv-4@test": true})
+
+	res, err := newTestEngine(t, s.provider("", "", 2)).Download(context.Background(), job, nil)
+	if err != nil {
+		t.Fatalf("got %v, want the download to finish so PAR2 can repair it", err)
+	}
+
+	if res.MissingArticles != 1 {
+		t.Fatalf("got %d missing articles, want 1", res.MissingArticles)
+	}
+}
+
+func TestObfuscatedRecoveryFileKeepsGoing(t *testing.T) {
+	// A readable index but a recovery file with no extension: its data
+	// cannot be identified, so the loss is not weighed against it.
+	s := newFakeNNTP(t, "", "")
+	job, _ := buildJob(t, s, map[string][]byte{
+		"movie.mkv":  randBytes(100_000),
+		"movie.par2": randBytes(1_000),
+		"a8f3k2b9":   randBytes(30_000),
+	}, 10_000, map[string]bool{"movie.mkv-4@test": true})
+
+	res, err := newTestEngine(t, s.provider("", "", 2)).Download(context.Background(), job, nil)
+	if err != nil {
+		t.Fatalf("got %v, want the download to finish", err)
+	}
+
+	if res.MissingArticles != 1 {
+		t.Fatalf("got %d missing articles, want 1", res.MissingArticles)
+	}
+}
+
+func TestRecoveryCapacity(t *testing.T) {
+	file := func(name string, sizes ...int64) NZBFile {
+		f := NZBFile{Name: name}
+		for _, n := range sizes {
+			f.Segments = append(f.Segments, Segment{Bytes: n})
+		}
+
+		return f
+	}
+
+	for _, tc := range []struct {
+		name      string
+		files     []NZBFile
+		bytes     int64
+		trustable bool
+	}{
+		{"every par2 counts", []NZBFile{file("m.mkv", 900), file("m.par2", 10), file("m.vol00+01.par2", 40, 40), file("m.vol-02.par2", 60), file("M.VOL-03.PAR2", 5)}, 155, true},
+		{"no par2", []NZBFile{file("m.mkv", 900), file("m.nfo", 1)}, 0, false},
+		{"obfuscated file", []NZBFile{file("m.mkv", 900), file("m.par2", 10), file("4b470d63a19844b0", 300)}, 0, false},
+		{"trailing dot", []NZBFile{file("m.par2", 10), file("m.", 300)}, 0, false},
+	} {
+		got, ok := recoveryCapacity(&NZB{Files: tc.files})
+		if got != tc.bytes || ok != tc.trustable {
+			t.Fatalf("%s: got %d, %v, want %d, %v", tc.name, got, ok, tc.bytes, tc.trustable)
 		}
 	}
 }

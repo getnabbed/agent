@@ -25,16 +25,19 @@ out the fastest usenet libraries. Each stage was checked in October 2026.
 1. **Download (done).** Articles are fetched through a connection pool per
    provider and decoded into `data/` in the job's work directory.
    - **Stopping early.** PAR2 can never restore more data than its
-     recovery volumes hold. So once the articles missing from every
-     provider add up to more bytes than the NZB's recovery volumes, the
-     release cannot be completed, and the download fails `INCOMPLETE`
-     (not retryable) at once rather than after asking for every article.
-     A release taken down from the provider used to spend about 20 minutes
+     files hold. So once the articles missing from every provider add up
+     to more bytes than all the NZB's `.par2` files together, the release
+     cannot be completed, and the download fails `INCOMPLETE` (not
+     retryable) at once rather than after asking for every article. A
+     release taken down from the provider used to spend about 20 minutes
      at 0% before failing; it now fails within the first few articles.
-     This applies only when the NZB names its PAR2 files: with obfuscated
-     names the recovery data cannot be told apart, so every article is
-     still fetched. Fetches of recovery volumes for repair never stop
-     early; the assembler decides whether repair can still work.
+     Every `.par2` file counts, the index too, because posters name
+     volumes `name.vol-01.par2` as well as `name.vol00+01.par2`; counting
+     too much only makes the stop later. It applies only when the NZB has
+     PAR2 files and every file has an extension: an obfuscated name can
+     hide recovery data, so then every article is still fetched. Fetches
+     of recovery volumes for repair never stop early; the assembler
+     decides whether repair can still work.
 2. **Verify and rename (done).** The PAR2 index is downloaded with the
    data; recovery volumes are deferred. Each protected file is matched by
    size and the MD5 of its first 16 KiB, so obfuscated names are found and

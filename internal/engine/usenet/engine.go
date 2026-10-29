@@ -410,10 +410,8 @@ type download struct {
 	missing   atomic.Int64
 
 	// A release is beyond repair once the articles missing from every
-	// provider add up to more than its PAR2 recovery volumes hold: repair
-	// can never restore more than that. recovery is their total size and
-	// repairKnown says the NZB names its PAR2 files, without which the
-	// recovery data cannot be told apart from obfuscated data files.
+	// provider add up to more than its PAR2 files hold: repair can never
+	// restore more than that. See recoveryCapacity.
 	recovery     int64
 	repairKnown  bool
 	missingBytes atomic.Int64
@@ -436,17 +434,9 @@ func (d *download) run(ctx context.Context, progress func(engine.Progress)) (*en
 		included []int
 	)
 
+	d.recovery, d.repairKnown = recoveryCapacity(d.nzb)
+
 	for i, f := range d.nzb.Files {
-		if strings.EqualFold(path.Ext(f.Name), ".par2") {
-			d.repairKnown = true
-		}
-
-		if IsPAR2Volume(f.Name) {
-			for _, seg := range f.Segments {
-				d.recovery += seg.Bytes
-			}
-		}
-
 		if !d.want(f.Name) {
 			if IsPAR2Volume(f.Name) {
 				result.Deferred = append(result.Deferred, f.Name)
@@ -635,8 +625,43 @@ func (d *download) beyondRepair(missing, missingBytes, checked int64) error {
 		"missing_articles", missing, "missing_bytes", missingBytes, "recovery_bytes", d.recovery, "checked", checked)
 
 	return engine.Fail(pb.FailureClass_FAILURE_CLASS_INCOMPLETE, false,
-		"%d of the %d articles checked are missing (%s), more than the release's PAR2 recovery volumes (%s) can repair",
+		"%d of the %d articles checked are missing (%s), more than the release's PAR2 files (%s) can repair",
 		missing, checked, humanBytes(missingBytes), humanBytes(d.recovery))
+}
+
+// recoveryCapacity returns the most data PAR2 repair could restore for
+// nzb, and whether that figure can be trusted.
+//
+// Every .par2 file counts, the index too, not only names in the
+// name.vol00+01.par2 form: posters also write name.vol-01.par2 and other
+// variants. Counting too much only makes the early stop later; counting
+// too little would fail a release that repair could finish.
+//
+// The figure cannot be trusted when the NZB has no PAR2 files, or when any
+// file has no extension: obfuscated names can hide recovery data under any
+// name, so a release download then fetches every article as before.
+func recoveryCapacity(nzb *NZB) (int64, bool) {
+	var (
+		bytes int64
+		par2  bool
+	)
+
+	for _, f := range nzb.Files {
+		ext := path.Ext(f.Name)
+		if ext == "" || ext == "." {
+			return 0, false
+		}
+
+		if strings.EqualFold(ext, ".par2") {
+			par2 = true
+
+			for _, seg := range f.Segments {
+				bytes += seg.Bytes
+			}
+		}
+	}
+
+	return bytes, par2
 }
 
 // humanBytes renders n like "1.5 GB" for failure details.
