@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/storage"
@@ -67,8 +68,11 @@ func (s *fileStorage) OpenTorrent(_ context.Context, info *metainfo.Info, infoHa
 		off += fi.Length
 	}
 
-	return storage.TorrentImpl{Piece: t.piece, Close: func() error { return nil }}, nil
+	return storage.TorrentImpl{Piece: t.piece, Close: t.close}, nil
 }
+
+// errStorageClosed refuses file I/O on a torrent that has been dropped.
+var errStorageClosed = errors.New("torrent storage is closed")
 
 // fileTorrent is one torrent's files, laid end to end as the torrent's
 // byte stream.
@@ -76,6 +80,38 @@ type fileTorrent struct {
 	infoHash metainfo.Hash
 	pc       storage.PieceCompletion
 	files    []torrentFile
+
+	// mu is held for reading by every file operation and for writing by
+	// close. anacrolix's Drop waits for close, but not for reads and writes
+	// still running on other goroutines, such as a chunk that arrived as
+	// the last piece completed. Without this, Drop could return while such
+	// a call still had a file open, and on Windows the caller could not
+	// then move or delete it.
+	mu     sync.RWMutex
+	closed bool
+}
+
+// enter starts a file operation, or refuses it once the torrent is
+// closed. Every successful enter must be followed by leave.
+func (t *fileTorrent) enter() error {
+	t.mu.RLock()
+	if t.closed {
+		t.mu.RUnlock()
+		return errStorageClosed
+	}
+
+	return nil
+}
+
+func (t *fileTorrent) leave() { t.mu.RUnlock() }
+
+// close waits for file operations in flight and refuses new ones.
+func (t *fileTorrent) close() error {
+	t.mu.Lock()
+	t.closed = true
+	t.mu.Unlock()
+
+	return nil
 }
 
 func (t *fileTorrent) piece(p metainfo.Piece) storage.PieceImpl {
@@ -97,6 +133,12 @@ func (t *fileTorrent) fileAt(off int64) (*torrentFile, bool) {
 // ReadAt reads torrent bytes. A missing or short file reads as io.EOF, as
 // anacrolix's own storage does, so the piece is simply not there yet.
 func (t *fileTorrent) ReadAt(b []byte, off int64) (int, error) {
+	if err := t.enter(); err != nil {
+		return 0, err
+	}
+
+	defer t.leave()
+
 	var n int
 
 	for len(b) > 0 {
@@ -193,6 +235,12 @@ func (p *filePiece) WriteAt(b []byte, off int64) (int, error) {
 		return 0, fmt.Errorf("write of %d bytes at %d is outside piece %d", len(b), off, p.p.Index())
 	}
 
+	if err := p.t.enter(); err != nil {
+		return 0, err
+	}
+
+	defer p.t.leave()
+
 	return p.t.writeAt(b, p.p.Offset()+off)
 }
 
@@ -200,6 +248,12 @@ func (p *filePiece) WriteAt(b []byte, off int64) (int, error) {
 // before it is recorded as complete, so a crash cannot leave a persistent
 // completion record for data that never reached the disk.
 func (p *filePiece) MarkComplete() error {
+	if err := p.t.enter(); err != nil {
+		return err
+	}
+
+	defer p.t.leave()
+
 	for _, f := range p.t.overlapping(p.p.Offset(), p.p.Length()) {
 		if err := f.sync(); err != nil {
 			return fmt.Errorf("sync %s: %w", f.path, err)
@@ -210,12 +264,26 @@ func (p *filePiece) MarkComplete() error {
 }
 
 // MarkNotComplete implements storage.PieceImpl.
-func (p *filePiece) MarkNotComplete() error { return p.t.pc.Set(p.key(), false) }
+func (p *filePiece) MarkNotComplete() error {
+	if err := p.t.enter(); err != nil {
+		return err
+	}
+
+	defer p.t.leave()
+
+	return p.t.pc.Set(p.key(), false)
+}
 
 // Completion implements storage.PieceImpl. A piece recorded as complete
 // whose files are now missing or too short is reported incomplete, so it is
 // downloaded again.
 func (p *filePiece) Completion() storage.Completion {
+	if err := p.t.enter(); err != nil {
+		return storage.Completion{Err: err}
+	}
+
+	defer p.t.leave()
+
 	c, err := p.t.pc.Get(p.key())
 	c.Err = errors.Join(c.Err, err)
 	if c.Err != nil || !c.Ok || !c.Complete {

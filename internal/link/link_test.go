@@ -193,10 +193,22 @@ func TestHandshakeCommandAndTokenExpiringReconnect(t *testing.T) {
 			return err
 		}
 
+		// Ack heartbeats while waiting: at 20 ms the agent drops a stream
+		// after three unanswered ones, which a slow runner reaches before the
+		// result is sent, and the result is then lost with the stream.
 		for {
 			m, err := srv.Recv()
 			if err != nil {
 				return err
+			}
+
+			if hb := m.GetHeartbeat(); hb != nil {
+				ack := &pb.HeartbeatAck{Seq: hb.GetSeq(), ServerTimeMs: time.Now().UnixMilli()}
+				if err := srv.Send(&pb.ControlMessage{Kind: &pb.ControlMessage_HeartbeatAck{HeartbeatAck: ack}}); err != nil {
+					return err
+				}
+
+				continue
 			}
 
 			if r := m.GetCommandResult(); r != nil {
