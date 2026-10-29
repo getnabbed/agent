@@ -11,14 +11,16 @@ volumes:
   media:
     mountPath: /media
     libraryRoots: [movies, tv]
-    nfs:
-      server: nas.lan
-      path: /export/media
+    source:
+      nfs:
+        server: nas.lan
+        path: /export/media
   archive:
     mountPath: /archive
     readOnly: true
-    persistentVolumeClaim:
-      claimName: archive
+    claim:
+      create: false
+      name: archive
 downloads:
   volume: media
 podSecurityContext:

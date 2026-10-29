@@ -1,12 +1,15 @@
 {{- /*
-Claims for volumes entries with claim:, shared by every replica. With
-claim.persistentVolume the chart also creates the PersistentVolume the
-claim binds to, for an existing folder such as a NAS share's movies/.
-Without it, the storage class provisions a new, empty volume.
+Claims for volumes entries with claim.create (the default), shared by
+every replica. With claim.persistentVolume the chart also creates the
+PersistentVolume the claim binds to, for an existing folder such as a NAS
+share's movies/. Without it, the storage class provisions a new, empty
+volume. Entries with create: false mount an existing claim and render
+nothing here.
 */ -}}
 {{- range $name, $v := .Values.volumes }}
+{{- if and $v.claim (include "nabbed-agent.claimCreate" $v.claim) }}
 {{- with $v.claim }}
-{{- $ctx := dict "root" $ "name" $name }}
+{{- $ctx := dict "root" $ "name" $name "v" $v }}
 {{- $claimName := include "nabbed-agent.claimName" $ctx }}
 {{- $pvName := include "nabbed-agent.pvName" $ctx }}
 {{- $modes := default (list "ReadWriteMany") .accessModes }}
@@ -83,5 +86,6 @@ spec:
   {{- else if .storageClassName }}
   storageClassName: {{ .storageClassName }}
   {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}

@@ -16,6 +16,7 @@ volumes:
     mountPath: /media/movies
     libraryRoots: ["."]
     claim:
+      create: true
       storageClassName: nfs-csi
       size: 300Gi
       persistentVolume:
@@ -30,6 +31,7 @@ volumes:
   scratch:
     mountPath: /scratch
     claim:
+      create: true
       storageClassName: nfs-csi
       size: 200Gi
       keep: false

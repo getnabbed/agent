@@ -107,23 +107,28 @@ downloads:
 #                 added to library.allowed_roots ("." for mountPath
 #                 itself). Without any, the web app can import nowhere.
 #
-# and exactly one of:
+# and exactly one of claim or source.
 #
-#   claim:        a claim the chart creates, named <fullname>-<entry>:
-#     size:             required
-#     storageClassName: for example nfs-csi
-#     accessModes:      default [ReadWriteMany], since replicas share it
-#     annotations:      added to the claim
-#     keep:             keep the claim (and volume) on helm uninstall
-#                       (default true)
-#     persistentVolume: bind to an existing folder through a static
-#                       PersistentVolume the chart creates, always with
-#                       reclaim policy Retain. A volume source (csi, nfs)
-#                       plus mountOptions; a csi volumeHandle defaults to
-#                       the volume's name. Without it, the storage class
-#                       provisions a new, empty volume.
-#   a Kubernetes volume source, used as is: nfs, persistentVolumeClaim
-#                 (an existing claim in this namespace), hostPath, csi...
+#   claim:
+#     create: true        the chart creates the claim (the default)
+#       name:             default <fullname>-<entry>
+#       size:             required
+#       storageClassName: for example nfs-csi
+#       accessModes:      default [ReadWriteMany], since replicas share it
+#       annotations:      added to the claim
+#       keep:             keep the claim and its volume on helm uninstall
+#                         (default true)
+#       persistentVolume: bind to an existing folder through a static
+#                         PersistentVolume the chart creates, always with
+#                         reclaim policy Retain: a volume source (csi,
+#                         nfs) plus mountOptions. A csi volumeHandle
+#                         defaults to the volume's name. Without it, the
+#                         storage class provisions a new, empty volume.
+#     create: false       mount an existing claim
+#       name:             required, in the release's namespace
+#
+#   source:               any Kubernetes volume source, used as is (nfs,
+#                         hostPath, csi, ...)
 #
 # Files are written as the agent's uid (podSecurityContext.runAsUser): set
 # it to the owner your media server expects. CSI drivers with
@@ -136,6 +141,7 @@ volumes: {}
 #    mountPath: /media/movies
 #    libraryRoots: ["."]
 #    claim:
+#      create: true
 #      storageClassName: nfs-csi
 #      size: 300Gi
 #      persistentVolume:
@@ -146,6 +152,12 @@ volumes: {}
 #            share: /export/media
 #            subDir: movies
 #        mountOptions: [nfsvers=4.1]
+#  tv:
+#    mountPath: /media/tv
+#    libraryRoots: ["."]
+#    claim:
+#      create: false
+#      name: media-tv
 
 torrent:
   # Port BitTorrent listens on in every pod. Forwarding it improves speeds

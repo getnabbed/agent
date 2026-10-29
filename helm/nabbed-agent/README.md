@@ -121,9 +121,10 @@ Use `extraEnv` for anything else, such as `NABBED_LOG_LEVEL=debug`.
 `volumes` mounts folders into every agent. Each entry has a `mountPath`,
 optionally `readOnly`, and `libraryRoots`, the folders under `mountPath`
 the web app may import into. They are added to `library.allowed_roots`.
+Each entry is backed by exactly one of `claim` or `source`.
 
-The usual setup is a claim the chart creates, bound to an existing folder
-on your NAS through a static PersistentVolume:
+**A claim the chart creates** (`claim.create: true`, the default), here
+bound to an existing folder on your NAS through a static PersistentVolume:
 
 ```yaml
 volumes:
@@ -131,6 +132,7 @@ volumes:
     mountPath: /media/movies
     libraryRoots: ["."]            # allows /media/movies itself
     claim:
+      create: true
       storageClassName: nfs-csi
       size: 300Gi
       persistentVolume:
@@ -143,14 +145,39 @@ volumes:
         mountOptions: [nfsvers=4.1]
 ```
 
-The volume always has reclaim policy `Retain`, so deleting it or the claim
+The claim is named `<fullname>-<entry>` unless you set `claim.name`. The
+volume always has reclaim policy `Retain`, so deleting it or the claim
 never touches the files. The claim and volume survive `helm uninstall`
 (`claim.keep`, default true). Without `persistentVolume`, the storage class
 provisions a new, empty volume, which suits a shared downloads area.
 
-An entry can instead hold any Kubernetes volume source, used as is:
-`persistentVolumeClaim` for an existing claim in the release's namespace,
-or `nfs`, `hostPath` or `csi`.
+**An existing claim** (`claim.create: false`), which must be in the
+release's namespace:
+
+```yaml
+volumes:
+  tv:
+    mountPath: /media/tv
+    libraryRoots: ["."]
+    claim:
+      create: false
+      name: media-tv
+```
+
+The settings that shape a new claim (`size`, `storageClassName`,
+`accessModes`, `annotations`, `keep`, `persistentVolume`) are refused
+here, so a value that would do nothing fails instead.
+
+**Any other volume source**, used as is under `source`, such as `nfs`,
+`hostPath` or `csi`:
+
+```yaml
+volumes:
+  media:
+    mountPath: /media
+    source:
+      nfs: {server: nas.lan, path: /export/media}
+```
 
 ### Ownership and fsGroup
 
