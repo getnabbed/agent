@@ -443,10 +443,47 @@ message Failure {
   string detail = 3;
 }
 
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_WARNING = 2;
+  SEVERITY_ERROR = 3;
+}
+
+// Note is one thing worth showing that happened during a stage. message is
+// readable English to show as is; code and attrs let a UI format it
+// instead. Codes are stable; docs/design/0008 lists them.
+message Note {
+  string code = 1;
+  // At most 256 bytes.
+  string message = 2;
+  Severity severity = 3;
+  // At most 8 entries.
+  map<string, string> attrs = 4;
+}
+
+// DownloadStats summarises the transfer.
+message DownloadStats {
+  // Payload bytes transferred.
+  uint64 bytes = 1;
+  // Time spent downloading, across attempts.
+  uint64 duration_ms = 2;
+  uint64 avg_bps = 3;
+  // The usenet source that served most articles, if any.
+  string source_id = 4;
+  uint32 missing_articles = 5;
+  // Torrent: distinct peers seen.
+  uint32 peers = 6;
+}
+
 message DownloadUpdate {
   string download_id = 1;
   DownloadState state = 2;
   Failure failure = 3;
+  // What happened in the stage this update leaves, at most 20.
+  repeated Note notes = 4;
+  // Set when the update leaves DOWNLOADING, and on DONE.
+  DownloadStats stats = 5;
 }
 
 message ImportedFile {
@@ -497,9 +534,18 @@ message SourceHealth {
   string detail = 3;
 }
 
+// AgentNotice reports a condition of the agent itself, once when it starts
+// and once with resolved set when it clears. A condition is identified by
+// code and subject_id. Codes are stable; docs/design/0008 lists them.
 message AgentNotice {
   string code = 1;
   string message = 2;
+  Severity severity = 3;
+  // At most 8 entries.
+  map<string, string> attrs = 4;
+  // The root, source or download the notice is about, if any.
+  string subject_id = 5;
+  bool resolved = 6;
 }
 
 // EventAck is sent by the gateway only after JetStream has stored the events.
@@ -526,9 +572,13 @@ message DownloadProgress {
   uint64 eta_s = 5;
 }
 
+// RootDiskFree is the free space where a library root lives, or, with
+// downloads set and no root_id, where the agent keeps downloads.
 message RootDiskFree {
   string root_id = 1;
   uint64 free_bytes = 2;
+  uint64 total_bytes = 3;
+  bool downloads = 4;
 }
 
 message HostStats {

@@ -572,6 +572,58 @@ func (FailureClass) EnumDescriptor() ([]byte, []int) {
 	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{8}
 }
 
+type Severity int32
+
+const (
+	Severity_SEVERITY_UNSPECIFIED Severity = 0
+	Severity_SEVERITY_INFO        Severity = 1
+	Severity_SEVERITY_WARNING     Severity = 2
+	Severity_SEVERITY_ERROR       Severity = 3
+)
+
+// Enum value maps for Severity.
+var (
+	Severity_name = map[int32]string{
+		0: "SEVERITY_UNSPECIFIED",
+		1: "SEVERITY_INFO",
+		2: "SEVERITY_WARNING",
+		3: "SEVERITY_ERROR",
+	}
+	Severity_value = map[string]int32{
+		"SEVERITY_UNSPECIFIED": 0,
+		"SEVERITY_INFO":        1,
+		"SEVERITY_WARNING":     2,
+		"SEVERITY_ERROR":       3,
+	}
+)
+
+func (x Severity) Enum() *Severity {
+	p := new(Severity)
+	*p = x
+	return p
+}
+
+func (x Severity) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Severity) Descriptor() protoreflect.EnumDescriptor {
+	return file_nabbed_agent_v2_agent_proto_enumTypes[9].Descriptor()
+}
+
+func (Severity) Type() protoreflect.EnumType {
+	return &file_nabbed_agent_v2_agent_proto_enumTypes[9]
+}
+
+func (x Severity) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Severity.Descriptor instead.
+func (Severity) EnumDescriptor() ([]byte, []int) {
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{9}
+}
+
 // Header is carried by every message in both directions.
 type Header struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -3603,18 +3655,184 @@ func (x *Failure) GetDetail() string {
 	return ""
 }
 
+// Note is one thing worth showing that happened during a stage. message is
+// readable English to show as is; code and attrs let a UI format it
+// instead. Codes are stable; docs/design/0008 lists them.
+type Note struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Code  string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	// At most 256 bytes.
+	Message  string   `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Severity Severity `protobuf:"varint,3,opt,name=severity,proto3,enum=nabbed.agent.v2.Severity" json:"severity,omitempty"`
+	// At most 8 entries.
+	Attrs         map[string]string `protobuf:"bytes,4,rep,name=attrs,proto3" json:"attrs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Note) Reset() {
+	*x = Note{}
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Note) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Note) ProtoMessage() {}
+
+func (x *Note) ProtoReflect() protoreflect.Message {
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Note.ProtoReflect.Descriptor instead.
+func (*Note) Descriptor() ([]byte, []int) {
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *Note) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *Note) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *Note) GetSeverity() Severity {
+	if x != nil {
+		return x.Severity
+	}
+	return Severity_SEVERITY_UNSPECIFIED
+}
+
+func (x *Note) GetAttrs() map[string]string {
+	if x != nil {
+		return x.Attrs
+	}
+	return nil
+}
+
+// DownloadStats summarises the transfer.
+type DownloadStats struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Payload bytes transferred.
+	Bytes uint64 `protobuf:"varint,1,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	// Time spent downloading, across attempts.
+	DurationMs uint64 `protobuf:"varint,2,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	AvgBps     uint64 `protobuf:"varint,3,opt,name=avg_bps,json=avgBps,proto3" json:"avg_bps,omitempty"`
+	// The usenet source that served most articles, if any.
+	SourceId        string `protobuf:"bytes,4,opt,name=source_id,json=sourceId,proto3" json:"source_id,omitempty"`
+	MissingArticles uint32 `protobuf:"varint,5,opt,name=missing_articles,json=missingArticles,proto3" json:"missing_articles,omitempty"`
+	// Torrent: distinct peers seen.
+	Peers         uint32 `protobuf:"varint,6,opt,name=peers,proto3" json:"peers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DownloadStats) Reset() {
+	*x = DownloadStats{}
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DownloadStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DownloadStats) ProtoMessage() {}
+
+func (x *DownloadStats) ProtoReflect() protoreflect.Message {
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DownloadStats.ProtoReflect.Descriptor instead.
+func (*DownloadStats) Descriptor() ([]byte, []int) {
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *DownloadStats) GetBytes() uint64 {
+	if x != nil {
+		return x.Bytes
+	}
+	return 0
+}
+
+func (x *DownloadStats) GetDurationMs() uint64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *DownloadStats) GetAvgBps() uint64 {
+	if x != nil {
+		return x.AvgBps
+	}
+	return 0
+}
+
+func (x *DownloadStats) GetSourceId() string {
+	if x != nil {
+		return x.SourceId
+	}
+	return ""
+}
+
+func (x *DownloadStats) GetMissingArticles() uint32 {
+	if x != nil {
+		return x.MissingArticles
+	}
+	return 0
+}
+
+func (x *DownloadStats) GetPeers() uint32 {
+	if x != nil {
+		return x.Peers
+	}
+	return 0
+}
+
 type DownloadUpdate struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DownloadId    string                 `protobuf:"bytes,1,opt,name=download_id,json=downloadId,proto3" json:"download_id,omitempty"`
-	State         DownloadState          `protobuf:"varint,2,opt,name=state,proto3,enum=nabbed.agent.v2.DownloadState" json:"state,omitempty"`
-	Failure       *Failure               `protobuf:"bytes,3,opt,name=failure,proto3" json:"failure,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	DownloadId string                 `protobuf:"bytes,1,opt,name=download_id,json=downloadId,proto3" json:"download_id,omitempty"`
+	State      DownloadState          `protobuf:"varint,2,opt,name=state,proto3,enum=nabbed.agent.v2.DownloadState" json:"state,omitempty"`
+	Failure    *Failure               `protobuf:"bytes,3,opt,name=failure,proto3" json:"failure,omitempty"`
+	// What happened in the stage this update leaves, at most 20.
+	Notes []*Note `protobuf:"bytes,4,rep,name=notes,proto3" json:"notes,omitempty"`
+	// Set when the update leaves DOWNLOADING, and on DONE.
+	Stats         *DownloadStats `protobuf:"bytes,5,opt,name=stats,proto3" json:"stats,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DownloadUpdate) Reset() {
 	*x = DownloadUpdate{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[40]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3626,7 +3844,7 @@ func (x *DownloadUpdate) String() string {
 func (*DownloadUpdate) ProtoMessage() {}
 
 func (x *DownloadUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[40]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3639,7 +3857,7 @@ func (x *DownloadUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DownloadUpdate.ProtoReflect.Descriptor instead.
 func (*DownloadUpdate) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{40}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *DownloadUpdate) GetDownloadId() string {
@@ -3663,6 +3881,20 @@ func (x *DownloadUpdate) GetFailure() *Failure {
 	return nil
 }
 
+func (x *DownloadUpdate) GetNotes() []*Note {
+	if x != nil {
+		return x.Notes
+	}
+	return nil
+}
+
+func (x *DownloadUpdate) GetStats() *DownloadStats {
+	if x != nil {
+		return x.Stats
+	}
+	return nil
+}
+
 type ImportedFile struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RelativePath  string                 `protobuf:"bytes,1,opt,name=relative_path,json=relativePath,proto3" json:"relative_path,omitempty"`
@@ -3673,7 +3905,7 @@ type ImportedFile struct {
 
 func (x *ImportedFile) Reset() {
 	*x = ImportedFile{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[41]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3685,7 +3917,7 @@ func (x *ImportedFile) String() string {
 func (*ImportedFile) ProtoMessage() {}
 
 func (x *ImportedFile) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[41]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3698,7 +3930,7 @@ func (x *ImportedFile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportedFile.ProtoReflect.Descriptor instead.
 func (*ImportedFile) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{41}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ImportedFile) GetRelativePath() string {
@@ -3727,7 +3959,7 @@ type ImportCompleted struct {
 
 func (x *ImportCompleted) Reset() {
 	*x = ImportCompleted{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[42]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3739,7 +3971,7 @@ func (x *ImportCompleted) String() string {
 func (*ImportCompleted) ProtoMessage() {}
 
 func (x *ImportCompleted) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[42]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3752,7 +3984,7 @@ func (x *ImportCompleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportCompleted.ProtoReflect.Descriptor instead.
 func (*ImportCompleted) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{42}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ImportCompleted) GetDownloadId() string {
@@ -3794,7 +4026,7 @@ type ImportFailed struct {
 
 func (x *ImportFailed) Reset() {
 	*x = ImportFailed{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[43]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3806,7 +4038,7 @@ func (x *ImportFailed) String() string {
 func (*ImportFailed) ProtoMessage() {}
 
 func (x *ImportFailed) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[43]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3819,7 +4051,7 @@ func (x *ImportFailed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportFailed.ProtoReflect.Descriptor instead.
 func (*ImportFailed) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{43}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *ImportFailed) GetDownloadId() string {
@@ -3855,7 +4087,7 @@ type InventoryEntry struct {
 
 func (x *InventoryEntry) Reset() {
 	*x = InventoryEntry{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[44]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3867,7 +4099,7 @@ func (x *InventoryEntry) String() string {
 func (*InventoryEntry) ProtoMessage() {}
 
 func (x *InventoryEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[44]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3880,7 +4112,7 @@ func (x *InventoryEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InventoryEntry.ProtoReflect.Descriptor instead.
 func (*InventoryEntry) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{44}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *InventoryEntry) GetRootId() string {
@@ -3933,7 +4165,7 @@ type InventoryReport struct {
 
 func (x *InventoryReport) Reset() {
 	*x = InventoryReport{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[45]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3945,7 +4177,7 @@ func (x *InventoryReport) String() string {
 func (*InventoryReport) ProtoMessage() {}
 
 func (x *InventoryReport) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[45]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3958,7 +4190,7 @@ func (x *InventoryReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InventoryReport.ProtoReflect.Descriptor instead.
 func (*InventoryReport) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{45}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *InventoryReport) GetEntries() []*InventoryEntry {
@@ -4007,7 +4239,7 @@ type SourceHealth struct {
 
 func (x *SourceHealth) Reset() {
 	*x = SourceHealth{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[46]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4019,7 +4251,7 @@ func (x *SourceHealth) String() string {
 func (*SourceHealth) ProtoMessage() {}
 
 func (x *SourceHealth) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[46]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4032,7 +4264,7 @@ func (x *SourceHealth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SourceHealth.ProtoReflect.Descriptor instead.
 func (*SourceHealth) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{46}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *SourceHealth) GetSourceId() string {
@@ -4056,17 +4288,26 @@ func (x *SourceHealth) GetDetail() string {
 	return ""
 }
 
+// AgentNotice reports a condition of the agent itself, once when it starts
+// and once with resolved set when it clears. A condition is identified by
+// code and subject_id. Codes are stable; docs/design/0008 lists them.
 type AgentNotice struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
-	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Code     string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message  string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Severity Severity               `protobuf:"varint,3,opt,name=severity,proto3,enum=nabbed.agent.v2.Severity" json:"severity,omitempty"`
+	// At most 8 entries.
+	Attrs map[string]string `protobuf:"bytes,4,rep,name=attrs,proto3" json:"attrs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// The root, source or download the notice is about, if any.
+	SubjectId     string `protobuf:"bytes,5,opt,name=subject_id,json=subjectId,proto3" json:"subject_id,omitempty"`
+	Resolved      bool   `protobuf:"varint,6,opt,name=resolved,proto3" json:"resolved,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AgentNotice) Reset() {
 	*x = AgentNotice{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[47]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4078,7 +4319,7 @@ func (x *AgentNotice) String() string {
 func (*AgentNotice) ProtoMessage() {}
 
 func (x *AgentNotice) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[47]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4091,7 +4332,7 @@ func (x *AgentNotice) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentNotice.ProtoReflect.Descriptor instead.
 func (*AgentNotice) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{47}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *AgentNotice) GetCode() string {
@@ -4108,6 +4349,34 @@ func (x *AgentNotice) GetMessage() string {
 	return ""
 }
 
+func (x *AgentNotice) GetSeverity() Severity {
+	if x != nil {
+		return x.Severity
+	}
+	return Severity_SEVERITY_UNSPECIFIED
+}
+
+func (x *AgentNotice) GetAttrs() map[string]string {
+	if x != nil {
+		return x.Attrs
+	}
+	return nil
+}
+
+func (x *AgentNotice) GetSubjectId() string {
+	if x != nil {
+		return x.SubjectId
+	}
+	return ""
+}
+
+func (x *AgentNotice) GetResolved() bool {
+	if x != nil {
+		return x.Resolved
+	}
+	return false
+}
+
 // EventAck is sent by the gateway only after JetStream has stored the events.
 type EventAck struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -4118,7 +4387,7 @@ type EventAck struct {
 
 func (x *EventAck) Reset() {
 	*x = EventAck{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[48]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4130,7 +4399,7 @@ func (x *EventAck) String() string {
 func (*EventAck) ProtoMessage() {}
 
 func (x *EventAck) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[48]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4143,7 +4412,7 @@ func (x *EventAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EventAck.ProtoReflect.Descriptor instead.
 func (*EventAck) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{48}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *EventAck) GetIds() []string {
@@ -4166,7 +4435,7 @@ type Telemetry struct {
 
 func (x *Telemetry) Reset() {
 	*x = Telemetry{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[49]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4178,7 +4447,7 @@ func (x *Telemetry) String() string {
 func (*Telemetry) ProtoMessage() {}
 
 func (x *Telemetry) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[49]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4191,7 +4460,7 @@ func (x *Telemetry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Telemetry.ProtoReflect.Descriptor instead.
 func (*Telemetry) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{49}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *Telemetry) GetKind() isTelemetry_Kind {
@@ -4248,7 +4517,7 @@ type DownloadProgress struct {
 
 func (x *DownloadProgress) Reset() {
 	*x = DownloadProgress{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[50]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4260,7 +4529,7 @@ func (x *DownloadProgress) String() string {
 func (*DownloadProgress) ProtoMessage() {}
 
 func (x *DownloadProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[50]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4273,7 +4542,7 @@ func (x *DownloadProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DownloadProgress.ProtoReflect.Descriptor instead.
 func (*DownloadProgress) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{50}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *DownloadProgress) GetDownloadId() string {
@@ -4311,17 +4580,21 @@ func (x *DownloadProgress) GetEtaS() uint64 {
 	return 0
 }
 
+// RootDiskFree is the free space where a library root lives, or, with
+// downloads set and no root_id, where the agent keeps downloads.
 type RootDiskFree struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RootId        string                 `protobuf:"bytes,1,opt,name=root_id,json=rootId,proto3" json:"root_id,omitempty"`
 	FreeBytes     uint64                 `protobuf:"varint,2,opt,name=free_bytes,json=freeBytes,proto3" json:"free_bytes,omitempty"`
+	TotalBytes    uint64                 `protobuf:"varint,3,opt,name=total_bytes,json=totalBytes,proto3" json:"total_bytes,omitempty"`
+	Downloads     bool                   `protobuf:"varint,4,opt,name=downloads,proto3" json:"downloads,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RootDiskFree) Reset() {
 	*x = RootDiskFree{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[51]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4333,7 +4606,7 @@ func (x *RootDiskFree) String() string {
 func (*RootDiskFree) ProtoMessage() {}
 
 func (x *RootDiskFree) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[51]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4346,7 +4619,7 @@ func (x *RootDiskFree) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RootDiskFree.ProtoReflect.Descriptor instead.
 func (*RootDiskFree) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{51}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *RootDiskFree) GetRootId() string {
@@ -4363,6 +4636,20 @@ func (x *RootDiskFree) GetFreeBytes() uint64 {
 	return 0
 }
 
+func (x *RootDiskFree) GetTotalBytes() uint64 {
+	if x != nil {
+		return x.TotalBytes
+	}
+	return 0
+}
+
+func (x *RootDiskFree) GetDownloads() bool {
+	if x != nil {
+		return x.Downloads
+	}
+	return false
+}
+
 type HostStats struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	DiskFree []*RootDiskFree        `protobuf:"bytes,1,rep,name=disk_free,json=diskFree,proto3" json:"disk_free,omitempty"`
@@ -4375,7 +4662,7 @@ type HostStats struct {
 
 func (x *HostStats) Reset() {
 	*x = HostStats{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[52]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4387,7 +4674,7 @@ func (x *HostStats) String() string {
 func (*HostStats) ProtoMessage() {}
 
 func (x *HostStats) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[52]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4400,7 +4687,7 @@ func (x *HostStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HostStats.ProtoReflect.Descriptor instead.
 func (*HostStats) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{52}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *HostStats) GetDiskFree() []*RootDiskFree {
@@ -4662,12 +4949,31 @@ const file_nabbed_agent_v2_agent_proto_rawDesc = "" +
 	"\aFailure\x123\n" +
 	"\x05class\x18\x01 \x01(\x0e2\x1d.nabbed.agent.v2.FailureClassR\x05class\x12\x1c\n" +
 	"\tretryable\x18\x02 \x01(\bR\tretryable\x12\x16\n" +
-	"\x06detail\x18\x03 \x01(\tR\x06detail\"\x9b\x01\n" +
+	"\x06detail\x18\x03 \x01(\tR\x06detail\"\xdd\x01\n" +
+	"\x04Note\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x125\n" +
+	"\bseverity\x18\x03 \x01(\x0e2\x19.nabbed.agent.v2.SeverityR\bseverity\x126\n" +
+	"\x05attrs\x18\x04 \x03(\v2 .nabbed.agent.v2.Note.AttrsEntryR\x05attrs\x1a8\n" +
+	"\n" +
+	"AttrsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbd\x01\n" +
+	"\rDownloadStats\x12\x14\n" +
+	"\x05bytes\x18\x01 \x01(\x04R\x05bytes\x12\x1f\n" +
+	"\vduration_ms\x18\x02 \x01(\x04R\n" +
+	"durationMs\x12\x17\n" +
+	"\aavg_bps\x18\x03 \x01(\x04R\x06avgBps\x12\x1b\n" +
+	"\tsource_id\x18\x04 \x01(\tR\bsourceId\x12)\n" +
+	"\x10missing_articles\x18\x05 \x01(\rR\x0fmissingArticles\x12\x14\n" +
+	"\x05peers\x18\x06 \x01(\rR\x05peers\"\xfe\x01\n" +
 	"\x0eDownloadUpdate\x12\x1f\n" +
 	"\vdownload_id\x18\x01 \x01(\tR\n" +
 	"downloadId\x124\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1e.nabbed.agent.v2.DownloadStateR\x05state\x122\n" +
-	"\afailure\x18\x03 \x01(\v2\x18.nabbed.agent.v2.FailureR\afailure\"G\n" +
+	"\afailure\x18\x03 \x01(\v2\x18.nabbed.agent.v2.FailureR\afailure\x12+\n" +
+	"\x05notes\x18\x04 \x03(\v2\x15.nabbed.agent.v2.NoteR\x05notes\x124\n" +
+	"\x05stats\x18\x05 \x01(\v2\x1e.nabbed.agent.v2.DownloadStatsR\x05stats\"G\n" +
 	"\fImportedFile\x12#\n" +
 	"\rrelative_path\x18\x01 \x01(\tR\frelativePath\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x04R\x04size\"\xb4\x01\n" +
@@ -4698,10 +5004,19 @@ const file_nabbed_agent_v2_agent_proto_rawDesc = "" +
 	"\fSourceHealth\x12\x1b\n" +
 	"\tsource_id\x18\x01 \x01(\tR\bsourceId\x12\x18\n" +
 	"\ahealthy\x18\x02 \x01(\bR\ahealthy\x12\x16\n" +
-	"\x06detail\x18\x03 \x01(\tR\x06detail\";\n" +
+	"\x06detail\x18\x03 \x01(\tR\x06detail\"\xa6\x02\n" +
 	"\vAgentNotice\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\x1c\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x125\n" +
+	"\bseverity\x18\x03 \x01(\x0e2\x19.nabbed.agent.v2.SeverityR\bseverity\x12=\n" +
+	"\x05attrs\x18\x04 \x03(\v2'.nabbed.agent.v2.AgentNotice.AttrsEntryR\x05attrs\x12\x1d\n" +
+	"\n" +
+	"subject_id\x18\x05 \x01(\tR\tsubjectId\x12\x1a\n" +
+	"\bresolved\x18\x06 \x01(\bR\bresolved\x1a8\n" +
+	"\n" +
+	"AttrsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1c\n" +
 	"\bEventAck\x12\x10\n" +
 	"\x03ids\x18\x01 \x03(\tR\x03ids\"\xa2\x01\n" +
 	"\tTelemetry\x12P\n" +
@@ -4716,11 +5031,14 @@ const file_nabbed_agent_v2_agent_proto_rawDesc = "" +
 	"\apercent\x18\x02 \x01(\x02R\apercent\x12\x14\n" +
 	"\x05bytes\x18\x03 \x01(\x04R\x05bytes\x12\x1b\n" +
 	"\tspeed_bps\x18\x04 \x01(\x04R\bspeedBps\x12\x13\n" +
-	"\x05eta_s\x18\x05 \x01(\x04R\x04etaS\"F\n" +
+	"\x05eta_s\x18\x05 \x01(\x04R\x04etaS\"\x85\x01\n" +
 	"\fRootDiskFree\x12\x17\n" +
 	"\aroot_id\x18\x01 \x01(\tR\x06rootId\x12\x1d\n" +
 	"\n" +
-	"free_bytes\x18\x02 \x01(\x04R\tfreeBytes\"\xbb\x01\n" +
+	"free_bytes\x18\x02 \x01(\x04R\tfreeBytes\x12\x1f\n" +
+	"\vtotal_bytes\x18\x03 \x01(\x04R\n" +
+	"totalBytes\x12\x1c\n" +
+	"\tdownloads\x18\x04 \x01(\bR\tdownloads\"\xbb\x01\n" +
 	"\tHostStats\x12:\n" +
 	"\tdisk_free\x18\x01 \x03(\v2\x1d.nabbed.agent.v2.RootDiskFreeR\bdiskFree\x12$\n" +
 	"\vcpu_percent\x18\x02 \x01(\x02H\x00R\n" +
@@ -4797,7 +5115,12 @@ const file_nabbed_agent_v2_agent_proto_rawDesc = "" +
 	"\x15FAILURE_CLASS_EXTRACT\x10\x04\x12\x18\n" +
 	"\x14FAILURE_CLASS_CLIENT\x10\x05\x12\x16\n" +
 	"\x12FAILURE_CLASS_DISK\x10\x06\x12\x18\n" +
-	"\x14FAILURE_CLASS_IMPORT\x10\a2d\n" +
+	"\x14FAILURE_CLASS_IMPORT\x10\a*a\n" +
+	"\bSeverity\x12\x18\n" +
+	"\x14SEVERITY_UNSPECIFIED\x10\x00\x12\x11\n" +
+	"\rSEVERITY_INFO\x10\x01\x12\x14\n" +
+	"\x10SEVERITY_WARNING\x10\x02\x12\x12\n" +
+	"\x0eSEVERITY_ERROR\x10\x032d\n" +
 	"\x13AgentGatewayService\x12M\n" +
 	"\aConnect\x12\x1d.nabbed.agent.v2.AgentMessage\x1a\x1f.nabbed.agent.v2.ControlMessage(\x010\x01B\xbd\x01\n" +
 	"\x13com.nabbed.agent.v2B\n" +
@@ -4815,8 +5138,8 @@ func file_nabbed_agent_v2_agent_proto_rawDescGZIP() []byte {
 	return file_nabbed_agent_v2_agent_proto_rawDescData
 }
 
-var file_nabbed_agent_v2_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 9)
-var file_nabbed_agent_v2_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 54)
+var file_nabbed_agent_v2_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
+var file_nabbed_agent_v2_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 58)
 var file_nabbed_agent_v2_agent_proto_goTypes = []any{
 	(GoAwayReason)(0),          // 0: nabbed.agent.v2.GoAwayReason
 	(CommandOutcome)(0),        // 1: nabbed.agent.v2.CommandOutcome
@@ -4827,134 +5150,145 @@ var file_nabbed_agent_v2_agent_proto_goTypes = []any{
 	(PayloadKind)(0),           // 6: nabbed.agent.v2.PayloadKind
 	(DownloadState)(0),         // 7: nabbed.agent.v2.DownloadState
 	(FailureClass)(0),          // 8: nabbed.agent.v2.FailureClass
-	(*Header)(nil),             // 9: nabbed.agent.v2.Header
-	(*ControlMessage)(nil),     // 10: nabbed.agent.v2.ControlMessage
-	(*AgentMessage)(nil),       // 11: nabbed.agent.v2.AgentMessage
-	(*Hello)(nil),              // 12: nabbed.agent.v2.Hello
-	(*LocalSourceSummary)(nil), // 13: nabbed.agent.v2.LocalSourceSummary
-	(*Welcome)(nil),            // 14: nabbed.agent.v2.Welcome
-	(*Heartbeat)(nil),          // 15: nabbed.agent.v2.Heartbeat
-	(*HeartbeatAck)(nil),       // 16: nabbed.agent.v2.HeartbeatAck
-	(*GoAway)(nil),             // 17: nabbed.agent.v2.GoAway
-	(*Command)(nil),            // 18: nabbed.agent.v2.Command
-	(*StartDownload)(nil),      // 19: nabbed.agent.v2.StartDownload
-	(*UpdateDownload)(nil),     // 20: nabbed.agent.v2.UpdateDownload
-	(*PauseDownload)(nil),      // 21: nabbed.agent.v2.PauseDownload
-	(*ResumeDownload)(nil),     // 22: nabbed.agent.v2.ResumeDownload
-	(*RetryDownload)(nil),      // 23: nabbed.agent.v2.RetryDownload
-	(*CancelDownload)(nil),     // 24: nabbed.agent.v2.CancelDownload
-	(*PutLibraryRoot)(nil),     // 25: nabbed.agent.v2.PutLibraryRoot
-	(*RemoveLibraryRoot)(nil),  // 26: nabbed.agent.v2.RemoveLibraryRoot
-	(*SetImportPolicy)(nil),    // 27: nabbed.agent.v2.SetImportPolicy
-	(*RescanLibrary)(nil),      // 28: nabbed.agent.v2.RescanLibrary
-	(*PutSource)(nil),          // 29: nabbed.agent.v2.PutSource
-	(*RemoveSource)(nil),       // 30: nabbed.agent.v2.RemoveSource
-	(*SetAgentSettings)(nil),   // 31: nabbed.agent.v2.SetAgentSettings
-	(*CommandResult)(nil),      // 32: nabbed.agent.v2.CommandResult
-	(*LibraryRoot)(nil),        // 33: nabbed.agent.v2.LibraryRoot
-	(*Source)(nil),             // 34: nabbed.agent.v2.Source
-	(*PathSanitizer)(nil),      // 35: nabbed.agent.v2.PathSanitizer
-	(*Download)(nil),           // 36: nabbed.agent.v2.Download
-	(*Release)(nil),            // 37: nabbed.agent.v2.Release
-	(*PayloadRef)(nil),         // 38: nabbed.agent.v2.PayloadRef
-	(*MediaRef)(nil),           // 39: nabbed.agent.v2.MediaRef
-	(*NamingContext)(nil),      // 40: nabbed.agent.v2.NamingContext
-	(*Quality)(nil),            // 41: nabbed.agent.v2.Quality
-	(*Query)(nil),              // 42: nabbed.agent.v2.Query
-	(*BrowseFilesystem)(nil),   // 43: nabbed.agent.v2.BrowseFilesystem
-	(*TestSource)(nil),         // 44: nabbed.agent.v2.TestSource
-	(*GetStatus)(nil),          // 45: nabbed.agent.v2.GetStatus
-	(*QueryResult)(nil),        // 46: nabbed.agent.v2.QueryResult
-	(*Event)(nil),              // 47: nabbed.agent.v2.Event
-	(*Failure)(nil),            // 48: nabbed.agent.v2.Failure
-	(*DownloadUpdate)(nil),     // 49: nabbed.agent.v2.DownloadUpdate
-	(*ImportedFile)(nil),       // 50: nabbed.agent.v2.ImportedFile
-	(*ImportCompleted)(nil),    // 51: nabbed.agent.v2.ImportCompleted
-	(*ImportFailed)(nil),       // 52: nabbed.agent.v2.ImportFailed
-	(*InventoryEntry)(nil),     // 53: nabbed.agent.v2.InventoryEntry
-	(*InventoryReport)(nil),    // 54: nabbed.agent.v2.InventoryReport
-	(*SourceHealth)(nil),       // 55: nabbed.agent.v2.SourceHealth
-	(*AgentNotice)(nil),        // 56: nabbed.agent.v2.AgentNotice
-	(*EventAck)(nil),           // 57: nabbed.agent.v2.EventAck
-	(*Telemetry)(nil),          // 58: nabbed.agent.v2.Telemetry
-	(*DownloadProgress)(nil),   // 59: nabbed.agent.v2.DownloadProgress
-	(*RootDiskFree)(nil),       // 60: nabbed.agent.v2.RootDiskFree
-	(*HostStats)(nil),          // 61: nabbed.agent.v2.HostStats
-	nil,                        // 62: nabbed.agent.v2.Header.TraceContextEntry
+	(Severity)(0),              // 9: nabbed.agent.v2.Severity
+	(*Header)(nil),             // 10: nabbed.agent.v2.Header
+	(*ControlMessage)(nil),     // 11: nabbed.agent.v2.ControlMessage
+	(*AgentMessage)(nil),       // 12: nabbed.agent.v2.AgentMessage
+	(*Hello)(nil),              // 13: nabbed.agent.v2.Hello
+	(*LocalSourceSummary)(nil), // 14: nabbed.agent.v2.LocalSourceSummary
+	(*Welcome)(nil),            // 15: nabbed.agent.v2.Welcome
+	(*Heartbeat)(nil),          // 16: nabbed.agent.v2.Heartbeat
+	(*HeartbeatAck)(nil),       // 17: nabbed.agent.v2.HeartbeatAck
+	(*GoAway)(nil),             // 18: nabbed.agent.v2.GoAway
+	(*Command)(nil),            // 19: nabbed.agent.v2.Command
+	(*StartDownload)(nil),      // 20: nabbed.agent.v2.StartDownload
+	(*UpdateDownload)(nil),     // 21: nabbed.agent.v2.UpdateDownload
+	(*PauseDownload)(nil),      // 22: nabbed.agent.v2.PauseDownload
+	(*ResumeDownload)(nil),     // 23: nabbed.agent.v2.ResumeDownload
+	(*RetryDownload)(nil),      // 24: nabbed.agent.v2.RetryDownload
+	(*CancelDownload)(nil),     // 25: nabbed.agent.v2.CancelDownload
+	(*PutLibraryRoot)(nil),     // 26: nabbed.agent.v2.PutLibraryRoot
+	(*RemoveLibraryRoot)(nil),  // 27: nabbed.agent.v2.RemoveLibraryRoot
+	(*SetImportPolicy)(nil),    // 28: nabbed.agent.v2.SetImportPolicy
+	(*RescanLibrary)(nil),      // 29: nabbed.agent.v2.RescanLibrary
+	(*PutSource)(nil),          // 30: nabbed.agent.v2.PutSource
+	(*RemoveSource)(nil),       // 31: nabbed.agent.v2.RemoveSource
+	(*SetAgentSettings)(nil),   // 32: nabbed.agent.v2.SetAgentSettings
+	(*CommandResult)(nil),      // 33: nabbed.agent.v2.CommandResult
+	(*LibraryRoot)(nil),        // 34: nabbed.agent.v2.LibraryRoot
+	(*Source)(nil),             // 35: nabbed.agent.v2.Source
+	(*PathSanitizer)(nil),      // 36: nabbed.agent.v2.PathSanitizer
+	(*Download)(nil),           // 37: nabbed.agent.v2.Download
+	(*Release)(nil),            // 38: nabbed.agent.v2.Release
+	(*PayloadRef)(nil),         // 39: nabbed.agent.v2.PayloadRef
+	(*MediaRef)(nil),           // 40: nabbed.agent.v2.MediaRef
+	(*NamingContext)(nil),      // 41: nabbed.agent.v2.NamingContext
+	(*Quality)(nil),            // 42: nabbed.agent.v2.Quality
+	(*Query)(nil),              // 43: nabbed.agent.v2.Query
+	(*BrowseFilesystem)(nil),   // 44: nabbed.agent.v2.BrowseFilesystem
+	(*TestSource)(nil),         // 45: nabbed.agent.v2.TestSource
+	(*GetStatus)(nil),          // 46: nabbed.agent.v2.GetStatus
+	(*QueryResult)(nil),        // 47: nabbed.agent.v2.QueryResult
+	(*Event)(nil),              // 48: nabbed.agent.v2.Event
+	(*Failure)(nil),            // 49: nabbed.agent.v2.Failure
+	(*Note)(nil),               // 50: nabbed.agent.v2.Note
+	(*DownloadStats)(nil),      // 51: nabbed.agent.v2.DownloadStats
+	(*DownloadUpdate)(nil),     // 52: nabbed.agent.v2.DownloadUpdate
+	(*ImportedFile)(nil),       // 53: nabbed.agent.v2.ImportedFile
+	(*ImportCompleted)(nil),    // 54: nabbed.agent.v2.ImportCompleted
+	(*ImportFailed)(nil),       // 55: nabbed.agent.v2.ImportFailed
+	(*InventoryEntry)(nil),     // 56: nabbed.agent.v2.InventoryEntry
+	(*InventoryReport)(nil),    // 57: nabbed.agent.v2.InventoryReport
+	(*SourceHealth)(nil),       // 58: nabbed.agent.v2.SourceHealth
+	(*AgentNotice)(nil),        // 59: nabbed.agent.v2.AgentNotice
+	(*EventAck)(nil),           // 60: nabbed.agent.v2.EventAck
+	(*Telemetry)(nil),          // 61: nabbed.agent.v2.Telemetry
+	(*DownloadProgress)(nil),   // 62: nabbed.agent.v2.DownloadProgress
+	(*RootDiskFree)(nil),       // 63: nabbed.agent.v2.RootDiskFree
+	(*HostStats)(nil),          // 64: nabbed.agent.v2.HostStats
+	nil,                        // 65: nabbed.agent.v2.Header.TraceContextEntry
+	nil,                        // 66: nabbed.agent.v2.Note.AttrsEntry
+	nil,                        // 67: nabbed.agent.v2.AgentNotice.AttrsEntry
 }
 var file_nabbed_agent_v2_agent_proto_depIdxs = []int32{
-	62, // 0: nabbed.agent.v2.Header.trace_context:type_name -> nabbed.agent.v2.Header.TraceContextEntry
-	9,  // 1: nabbed.agent.v2.ControlMessage.header:type_name -> nabbed.agent.v2.Header
-	14, // 2: nabbed.agent.v2.ControlMessage.welcome:type_name -> nabbed.agent.v2.Welcome
-	16, // 3: nabbed.agent.v2.ControlMessage.heartbeat_ack:type_name -> nabbed.agent.v2.HeartbeatAck
-	17, // 4: nabbed.agent.v2.ControlMessage.go_away:type_name -> nabbed.agent.v2.GoAway
-	18, // 5: nabbed.agent.v2.ControlMessage.command:type_name -> nabbed.agent.v2.Command
-	42, // 6: nabbed.agent.v2.ControlMessage.query:type_name -> nabbed.agent.v2.Query
-	57, // 7: nabbed.agent.v2.ControlMessage.event_ack:type_name -> nabbed.agent.v2.EventAck
-	9,  // 8: nabbed.agent.v2.AgentMessage.header:type_name -> nabbed.agent.v2.Header
-	12, // 9: nabbed.agent.v2.AgentMessage.hello:type_name -> nabbed.agent.v2.Hello
-	15, // 10: nabbed.agent.v2.AgentMessage.heartbeat:type_name -> nabbed.agent.v2.Heartbeat
-	32, // 11: nabbed.agent.v2.AgentMessage.command_result:type_name -> nabbed.agent.v2.CommandResult
-	46, // 12: nabbed.agent.v2.AgentMessage.query_result:type_name -> nabbed.agent.v2.QueryResult
-	47, // 13: nabbed.agent.v2.AgentMessage.event:type_name -> nabbed.agent.v2.Event
-	58, // 14: nabbed.agent.v2.AgentMessage.telemetry:type_name -> nabbed.agent.v2.Telemetry
-	13, // 15: nabbed.agent.v2.Hello.local_sources:type_name -> nabbed.agent.v2.LocalSourceSummary
+	65, // 0: nabbed.agent.v2.Header.trace_context:type_name -> nabbed.agent.v2.Header.TraceContextEntry
+	10, // 1: nabbed.agent.v2.ControlMessage.header:type_name -> nabbed.agent.v2.Header
+	15, // 2: nabbed.agent.v2.ControlMessage.welcome:type_name -> nabbed.agent.v2.Welcome
+	17, // 3: nabbed.agent.v2.ControlMessage.heartbeat_ack:type_name -> nabbed.agent.v2.HeartbeatAck
+	18, // 4: nabbed.agent.v2.ControlMessage.go_away:type_name -> nabbed.agent.v2.GoAway
+	19, // 5: nabbed.agent.v2.ControlMessage.command:type_name -> nabbed.agent.v2.Command
+	43, // 6: nabbed.agent.v2.ControlMessage.query:type_name -> nabbed.agent.v2.Query
+	60, // 7: nabbed.agent.v2.ControlMessage.event_ack:type_name -> nabbed.agent.v2.EventAck
+	10, // 8: nabbed.agent.v2.AgentMessage.header:type_name -> nabbed.agent.v2.Header
+	13, // 9: nabbed.agent.v2.AgentMessage.hello:type_name -> nabbed.agent.v2.Hello
+	16, // 10: nabbed.agent.v2.AgentMessage.heartbeat:type_name -> nabbed.agent.v2.Heartbeat
+	33, // 11: nabbed.agent.v2.AgentMessage.command_result:type_name -> nabbed.agent.v2.CommandResult
+	47, // 12: nabbed.agent.v2.AgentMessage.query_result:type_name -> nabbed.agent.v2.QueryResult
+	48, // 13: nabbed.agent.v2.AgentMessage.event:type_name -> nabbed.agent.v2.Event
+	61, // 14: nabbed.agent.v2.AgentMessage.telemetry:type_name -> nabbed.agent.v2.Telemetry
+	14, // 15: nabbed.agent.v2.Hello.local_sources:type_name -> nabbed.agent.v2.LocalSourceSummary
 	0,  // 16: nabbed.agent.v2.GoAway.reason:type_name -> nabbed.agent.v2.GoAwayReason
-	19, // 17: nabbed.agent.v2.Command.start_download:type_name -> nabbed.agent.v2.StartDownload
-	20, // 18: nabbed.agent.v2.Command.update_download:type_name -> nabbed.agent.v2.UpdateDownload
-	21, // 19: nabbed.agent.v2.Command.pause_download:type_name -> nabbed.agent.v2.PauseDownload
-	22, // 20: nabbed.agent.v2.Command.resume_download:type_name -> nabbed.agent.v2.ResumeDownload
-	23, // 21: nabbed.agent.v2.Command.retry_download:type_name -> nabbed.agent.v2.RetryDownload
-	24, // 22: nabbed.agent.v2.Command.cancel_download:type_name -> nabbed.agent.v2.CancelDownload
-	25, // 23: nabbed.agent.v2.Command.put_library_root:type_name -> nabbed.agent.v2.PutLibraryRoot
-	26, // 24: nabbed.agent.v2.Command.remove_library_root:type_name -> nabbed.agent.v2.RemoveLibraryRoot
-	27, // 25: nabbed.agent.v2.Command.set_import_policy:type_name -> nabbed.agent.v2.SetImportPolicy
-	28, // 26: nabbed.agent.v2.Command.rescan_library:type_name -> nabbed.agent.v2.RescanLibrary
-	29, // 27: nabbed.agent.v2.Command.put_source:type_name -> nabbed.agent.v2.PutSource
-	30, // 28: nabbed.agent.v2.Command.remove_source:type_name -> nabbed.agent.v2.RemoveSource
-	31, // 29: nabbed.agent.v2.Command.set_agent_settings:type_name -> nabbed.agent.v2.SetAgentSettings
-	36, // 30: nabbed.agent.v2.StartDownload.download:type_name -> nabbed.agent.v2.Download
-	33, // 31: nabbed.agent.v2.PutLibraryRoot.root:type_name -> nabbed.agent.v2.LibraryRoot
+	20, // 17: nabbed.agent.v2.Command.start_download:type_name -> nabbed.agent.v2.StartDownload
+	21, // 18: nabbed.agent.v2.Command.update_download:type_name -> nabbed.agent.v2.UpdateDownload
+	22, // 19: nabbed.agent.v2.Command.pause_download:type_name -> nabbed.agent.v2.PauseDownload
+	23, // 20: nabbed.agent.v2.Command.resume_download:type_name -> nabbed.agent.v2.ResumeDownload
+	24, // 21: nabbed.agent.v2.Command.retry_download:type_name -> nabbed.agent.v2.RetryDownload
+	25, // 22: nabbed.agent.v2.Command.cancel_download:type_name -> nabbed.agent.v2.CancelDownload
+	26, // 23: nabbed.agent.v2.Command.put_library_root:type_name -> nabbed.agent.v2.PutLibraryRoot
+	27, // 24: nabbed.agent.v2.Command.remove_library_root:type_name -> nabbed.agent.v2.RemoveLibraryRoot
+	28, // 25: nabbed.agent.v2.Command.set_import_policy:type_name -> nabbed.agent.v2.SetImportPolicy
+	29, // 26: nabbed.agent.v2.Command.rescan_library:type_name -> nabbed.agent.v2.RescanLibrary
+	30, // 27: nabbed.agent.v2.Command.put_source:type_name -> nabbed.agent.v2.PutSource
+	31, // 28: nabbed.agent.v2.Command.remove_source:type_name -> nabbed.agent.v2.RemoveSource
+	32, // 29: nabbed.agent.v2.Command.set_agent_settings:type_name -> nabbed.agent.v2.SetAgentSettings
+	37, // 30: nabbed.agent.v2.StartDownload.download:type_name -> nabbed.agent.v2.Download
+	34, // 31: nabbed.agent.v2.PutLibraryRoot.root:type_name -> nabbed.agent.v2.LibraryRoot
 	4,  // 32: nabbed.agent.v2.SetImportPolicy.mode:type_name -> nabbed.agent.v2.ImportMode
-	35, // 33: nabbed.agent.v2.SetImportPolicy.sanitizer:type_name -> nabbed.agent.v2.PathSanitizer
-	34, // 34: nabbed.agent.v2.PutSource.source:type_name -> nabbed.agent.v2.Source
+	36, // 33: nabbed.agent.v2.SetImportPolicy.sanitizer:type_name -> nabbed.agent.v2.PathSanitizer
+	35, // 34: nabbed.agent.v2.PutSource.source:type_name -> nabbed.agent.v2.Source
 	1,  // 35: nabbed.agent.v2.CommandResult.outcome:type_name -> nabbed.agent.v2.CommandOutcome
 	2,  // 36: nabbed.agent.v2.CommandResult.error_code:type_name -> nabbed.agent.v2.CommandErrorCode
 	3,  // 37: nabbed.agent.v2.LibraryRoot.kind:type_name -> nabbed.agent.v2.LibraryKind
-	37, // 38: nabbed.agent.v2.Download.release:type_name -> nabbed.agent.v2.Release
-	40, // 39: nabbed.agent.v2.Download.naming:type_name -> nabbed.agent.v2.NamingContext
+	38, // 38: nabbed.agent.v2.Download.release:type_name -> nabbed.agent.v2.Release
+	41, // 39: nabbed.agent.v2.Download.naming:type_name -> nabbed.agent.v2.NamingContext
 	5,  // 40: nabbed.agent.v2.Release.protocol:type_name -> nabbed.agent.v2.Protocol
-	41, // 41: nabbed.agent.v2.Release.quality:type_name -> nabbed.agent.v2.Quality
-	38, // 42: nabbed.agent.v2.Release.payload_ref:type_name -> nabbed.agent.v2.PayloadRef
+	42, // 41: nabbed.agent.v2.Release.quality:type_name -> nabbed.agent.v2.Quality
+	39, // 42: nabbed.agent.v2.Release.payload_ref:type_name -> nabbed.agent.v2.PayloadRef
 	6,  // 43: nabbed.agent.v2.PayloadRef.kind:type_name -> nabbed.agent.v2.PayloadKind
-	39, // 44: nabbed.agent.v2.NamingContext.media:type_name -> nabbed.agent.v2.MediaRef
-	41, // 45: nabbed.agent.v2.NamingContext.quality:type_name -> nabbed.agent.v2.Quality
-	43, // 46: nabbed.agent.v2.Query.browse_filesystem:type_name -> nabbed.agent.v2.BrowseFilesystem
-	44, // 47: nabbed.agent.v2.Query.test_source:type_name -> nabbed.agent.v2.TestSource
-	45, // 48: nabbed.agent.v2.Query.get_status:type_name -> nabbed.agent.v2.GetStatus
-	49, // 49: nabbed.agent.v2.Event.download_update:type_name -> nabbed.agent.v2.DownloadUpdate
-	51, // 50: nabbed.agent.v2.Event.import_completed:type_name -> nabbed.agent.v2.ImportCompleted
-	52, // 51: nabbed.agent.v2.Event.import_failed:type_name -> nabbed.agent.v2.ImportFailed
-	54, // 52: nabbed.agent.v2.Event.inventory_report:type_name -> nabbed.agent.v2.InventoryReport
-	55, // 53: nabbed.agent.v2.Event.source_health:type_name -> nabbed.agent.v2.SourceHealth
-	56, // 54: nabbed.agent.v2.Event.agent_notice:type_name -> nabbed.agent.v2.AgentNotice
+	40, // 44: nabbed.agent.v2.NamingContext.media:type_name -> nabbed.agent.v2.MediaRef
+	42, // 45: nabbed.agent.v2.NamingContext.quality:type_name -> nabbed.agent.v2.Quality
+	44, // 46: nabbed.agent.v2.Query.browse_filesystem:type_name -> nabbed.agent.v2.BrowseFilesystem
+	45, // 47: nabbed.agent.v2.Query.test_source:type_name -> nabbed.agent.v2.TestSource
+	46, // 48: nabbed.agent.v2.Query.get_status:type_name -> nabbed.agent.v2.GetStatus
+	52, // 49: nabbed.agent.v2.Event.download_update:type_name -> nabbed.agent.v2.DownloadUpdate
+	54, // 50: nabbed.agent.v2.Event.import_completed:type_name -> nabbed.agent.v2.ImportCompleted
+	55, // 51: nabbed.agent.v2.Event.import_failed:type_name -> nabbed.agent.v2.ImportFailed
+	57, // 52: nabbed.agent.v2.Event.inventory_report:type_name -> nabbed.agent.v2.InventoryReport
+	58, // 53: nabbed.agent.v2.Event.source_health:type_name -> nabbed.agent.v2.SourceHealth
+	59, // 54: nabbed.agent.v2.Event.agent_notice:type_name -> nabbed.agent.v2.AgentNotice
 	8,  // 55: nabbed.agent.v2.Failure.class:type_name -> nabbed.agent.v2.FailureClass
-	7,  // 56: nabbed.agent.v2.DownloadUpdate.state:type_name -> nabbed.agent.v2.DownloadState
-	48, // 57: nabbed.agent.v2.DownloadUpdate.failure:type_name -> nabbed.agent.v2.Failure
-	50, // 58: nabbed.agent.v2.ImportCompleted.files:type_name -> nabbed.agent.v2.ImportedFile
-	41, // 59: nabbed.agent.v2.ImportCompleted.quality:type_name -> nabbed.agent.v2.Quality
-	48, // 60: nabbed.agent.v2.ImportFailed.failure:type_name -> nabbed.agent.v2.Failure
-	53, // 61: nabbed.agent.v2.InventoryReport.entries:type_name -> nabbed.agent.v2.InventoryEntry
-	59, // 62: nabbed.agent.v2.Telemetry.download_progress:type_name -> nabbed.agent.v2.DownloadProgress
-	61, // 63: nabbed.agent.v2.Telemetry.host_stats:type_name -> nabbed.agent.v2.HostStats
-	60, // 64: nabbed.agent.v2.HostStats.disk_free:type_name -> nabbed.agent.v2.RootDiskFree
-	11, // 65: nabbed.agent.v2.AgentGatewayService.Connect:input_type -> nabbed.agent.v2.AgentMessage
-	10, // 66: nabbed.agent.v2.AgentGatewayService.Connect:output_type -> nabbed.agent.v2.ControlMessage
-	66, // [66:67] is the sub-list for method output_type
-	65, // [65:66] is the sub-list for method input_type
-	65, // [65:65] is the sub-list for extension type_name
-	65, // [65:65] is the sub-list for extension extendee
-	0,  // [0:65] is the sub-list for field type_name
+	9,  // 56: nabbed.agent.v2.Note.severity:type_name -> nabbed.agent.v2.Severity
+	66, // 57: nabbed.agent.v2.Note.attrs:type_name -> nabbed.agent.v2.Note.AttrsEntry
+	7,  // 58: nabbed.agent.v2.DownloadUpdate.state:type_name -> nabbed.agent.v2.DownloadState
+	49, // 59: nabbed.agent.v2.DownloadUpdate.failure:type_name -> nabbed.agent.v2.Failure
+	50, // 60: nabbed.agent.v2.DownloadUpdate.notes:type_name -> nabbed.agent.v2.Note
+	51, // 61: nabbed.agent.v2.DownloadUpdate.stats:type_name -> nabbed.agent.v2.DownloadStats
+	53, // 62: nabbed.agent.v2.ImportCompleted.files:type_name -> nabbed.agent.v2.ImportedFile
+	42, // 63: nabbed.agent.v2.ImportCompleted.quality:type_name -> nabbed.agent.v2.Quality
+	49, // 64: nabbed.agent.v2.ImportFailed.failure:type_name -> nabbed.agent.v2.Failure
+	56, // 65: nabbed.agent.v2.InventoryReport.entries:type_name -> nabbed.agent.v2.InventoryEntry
+	9,  // 66: nabbed.agent.v2.AgentNotice.severity:type_name -> nabbed.agent.v2.Severity
+	67, // 67: nabbed.agent.v2.AgentNotice.attrs:type_name -> nabbed.agent.v2.AgentNotice.AttrsEntry
+	62, // 68: nabbed.agent.v2.Telemetry.download_progress:type_name -> nabbed.agent.v2.DownloadProgress
+	64, // 69: nabbed.agent.v2.Telemetry.host_stats:type_name -> nabbed.agent.v2.HostStats
+	63, // 70: nabbed.agent.v2.HostStats.disk_free:type_name -> nabbed.agent.v2.RootDiskFree
+	12, // 71: nabbed.agent.v2.AgentGatewayService.Connect:input_type -> nabbed.agent.v2.AgentMessage
+	11, // 72: nabbed.agent.v2.AgentGatewayService.Connect:output_type -> nabbed.agent.v2.ControlMessage
+	72, // [72:73] is the sub-list for method output_type
+	71, // [71:72] is the sub-list for method input_type
+	71, // [71:71] is the sub-list for extension type_name
+	71, // [71:71] is the sub-list for extension extendee
+	0,  // [0:71] is the sub-list for field type_name
 }
 
 func init() { file_nabbed_agent_v2_agent_proto_init() }
@@ -5013,18 +5347,18 @@ func file_nabbed_agent_v2_agent_proto_init() {
 		(*Event_SourceHealth)(nil),
 		(*Event_AgentNotice)(nil),
 	}
-	file_nabbed_agent_v2_agent_proto_msgTypes[49].OneofWrappers = []any{
+	file_nabbed_agent_v2_agent_proto_msgTypes[51].OneofWrappers = []any{
 		(*Telemetry_DownloadProgress)(nil),
 		(*Telemetry_HostStats)(nil),
 	}
-	file_nabbed_agent_v2_agent_proto_msgTypes[52].OneofWrappers = []any{}
+	file_nabbed_agent_v2_agent_proto_msgTypes[54].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nabbed_agent_v2_agent_proto_rawDesc), len(file_nabbed_agent_v2_agent_proto_rawDesc)),
-			NumEnums:      9,
-			NumMessages:   54,
+			NumEnums:      10,
+			NumMessages:   58,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
