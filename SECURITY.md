@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security vulnerabilities privately using
-[GitHub's private vulnerability reporting](https://github.com/getnabbed/agent/security/advisories/new)
+[GitHub's private vulnerability reporting](https://github.com/wilderness-cloud/agent/security/advisories/new)
 rather than opening a public issue.
 
 Include a description of the issue, steps to reproduce, and the affected
