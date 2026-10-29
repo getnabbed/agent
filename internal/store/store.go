@@ -370,3 +370,26 @@ func Inspect(ctx context.Context, dir string) (*Summary, error) {
 
 	return &sum, nil
 }
+
+// Meta returns the value of a meta key read in tx, or "" if it is unset.
+func (t *Tx) Meta(ctx context.Context, key string) (string, error) {
+	var v string
+
+	err := t.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = ?", key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+
+	return v, err
+}
+
+// SetMeta sets a meta key as part of tx.
+func (t *Tx) SetMeta(ctx context.Context, key, value string) error {
+	_, err := t.ExecContext(ctx,
+		"INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value)
+
+	return err
+}
+
+// Meta returns the value of a meta key, or "" if it is unset.
+func (s *Store) Meta(ctx context.Context, key string) (string, error) { return s.meta(ctx, key) }
