@@ -136,10 +136,7 @@ func (e *Engine) clientLocked() (*torrent.Client, error) {
 
 	// Every job brings its own storage; this default only guards against a
 	// torrent ever being added without one, and writes nowhere persistent.
-	cfg.DefaultStorage = storage.NewFileOpts(storage.NewFileClientOpts{
-		ClientBaseDir:   os.TempDir(),
-		PieceCompletion: storage.NewMapPieceCompletion(),
-	})
+	cfg.DefaultStorage = newFileStorage(os.TempDir(), storage.NewMapPieceCompletion())
 
 	cl, err := torrent.NewClient(cfg)
 	if err != nil {
@@ -163,15 +160,9 @@ func (e *Engine) Download(ctx context.Context, job engine.Job, progress func(eng
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_DISK, true, "piece completion db: %v", err)
 	}
 
-	st := storage.NewFileOpts(storage.NewFileClientOpts{
-		ClientBaseDir:   filepath.Join(job.Dir, dataDir),
-		PieceCompletion: pc,
-		FilePathMaker:   func(o storage.FilePathMakerOpts) string { return relPath(o.Info, o.File) },
-		Logger:          e.log,
-	})
-	defer func() { _ = st.Close() }()
+	defer func() { _ = pc.Close() }()
 
-	spec.Storage = st
+	spec.Storage = newFileStorage(filepath.Join(job.Dir, dataDir), pc)
 	spec.PeerAddrs = append(spec.PeerAddrs, e.cfg.peerAddrs...)
 
 	t, err := e.add(spec)
