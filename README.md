@@ -42,6 +42,20 @@ curl -O https://raw.githubusercontent.com/getnabbed/agent/main/contrib/docker/co
 docker compose up -d && docker compose logs -f agent
 ```
 
+## Kubernetes
+
+The [Helm chart](helm/nabbed-agent) runs agents as a StatefulSet, one
+paired agent per replica, with shared library folders mounted from NFS or
+any other volume:
+
+```sh
+helm install nabbed ./helm/nabbed-agent --namespace nabbed --create-namespace \
+  --set config.api_url=https://api.nabbed.example
+```
+
+The install notes show how to get each agent's pairing code from
+`kubectl logs`.
+
 ## Configuration
 
 Settings come from, in increasing order of precedence: built-in defaults,

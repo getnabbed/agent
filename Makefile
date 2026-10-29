@@ -8,7 +8,7 @@ LDFLAGS  := -s -w \
 	-X $(MODULE)/internal/version.Commit=$(COMMIT) \
 	-X $(MODULE)/internal/version.Date=$(DATE)
 
-.PHONY: all build install test lint fmt vet tidy clean proto proto-lint proto-breaking proto-push vuln docker snapshot
+.PHONY: all build install test lint fmt vet tidy clean proto proto-lint proto-breaking proto-push vuln docker snapshot helm
 
 all: lint test build
 
@@ -52,6 +52,10 @@ docker:
 
 snapshot:
 	go run github.com/goreleaser/goreleaser/v2@v2.19.0 release --snapshot --clean --skip=publish,sign,docker
+
+# Lint the Helm chart, validate its manifests and the agent.yaml it generates.
+helm:
+	./helm/check.sh
 
 fmt:
 	gofmt -s -w .

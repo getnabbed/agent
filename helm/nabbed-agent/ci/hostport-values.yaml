@@ -1,0 +1,16 @@
+# One agent per node, torrent port bound on the node.
+replicas: 2
+config:
+  api_url: https://api.nabbed.example
+  log:
+    level: debug
+    format: json
+usenet:
+  existingSecret: nabbed-usenet
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+torrent:
+  hostPort: true
+extraEnv:
+  - name: NABBED_LIBRARY_FILE_MODE
+    value: "0640"

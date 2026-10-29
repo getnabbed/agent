@@ -45,7 +45,7 @@ which log format is useful.
 | macOS | launchd agent or daemon | `~/Library/Application Support/Nabbed Agent` or `/Library/...` | log file or `agent pair` first | JSON | SIGTERM |
 | Windows | console or Windows service | `%LOCALAPPDATA%\Nabbed\Agent`, or `%ProgramData%\Nabbed\Agent` for a service | console, or `agent pair` first | text or JSON | Ctrl-C or service stop |
 | Docker / Compose | container runtime | `/data` named volume | `docker logs` | JSON (no TTY) | SIGTERM |
-| Kubernetes | Deployment, 1 replica | PVC at `/data` | `kubectl logs` | JSON | SIGTERM |
+| Kubernetes | StatefulSet (`helm/nabbed-agent`), one agent per replica | PVC per replica, `/data/agent` | `kubectl logs` | JSON | SIGTERM |
 | TUI | user, attached to a daemon | none of its own | the daemon's state | n/a | n/a |
 
 Implemented now:
