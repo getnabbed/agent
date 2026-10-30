@@ -150,8 +150,8 @@ jobs:
 
   # Dev image for every merge to main, so main can be run and debugged
   # before a release. Built from the source Dockerfile and pushed as
-  #   ghcr.io/wilderness-cloud/agent:main             (moves with main)
-  #   ghcr.io/wilderness-cloud/agent:main-<sha12>     (one commit, never moves)
+  #   ghcr.io/getnabbed/agent:main             (moves with main)
+  #   ghcr.io/getnabbed/agent:main-<sha12>     (one commit, never moves)
   # Never latest or a SemVer tag: those come only from release.yml. Signed
   # with cosign; verify against ci.yml@refs/heads/main, not the release
   # identity.
@@ -169,7 +169,7 @@ jobs:
       packages: write  # push to ghcr.io
       id-token: write  # keyless cosign signing
     env:
-      IMAGE: ghcr.io/wilderness-cloud/agent
+      IMAGE: ghcr.io/getnabbed/agent
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

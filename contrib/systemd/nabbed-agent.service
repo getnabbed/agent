@@ -16,7 +16,7 @@
 
 [Unit]
 Description=Nabbed agent
-Documentation=https://github.com/wilderness-cloud/agent
+Documentation=https://github.com/getnabbed/agent
 Wants=network-online.target
 After=network-online.target
 StartLimitIntervalSec=10min

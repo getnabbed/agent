@@ -37,7 +37,7 @@ ARG VERSION=dev
 
 LABEL org.opencontainers.image.title="nabbed-agent" \
       org.opencontainers.image.description="Nabbed download agent" \
-      org.opencontainers.image.source="https://github.com/wilderness-cloud/agent" \
+      org.opencontainers.image.source="https://github.com/getnabbed/agent" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="${VERSION}"
 

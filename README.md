@@ -1,6 +1,6 @@
 # agent
 
-[![CI](https://github.com/wilderness-cloud/agent/actions/workflows/ci.yml/badge.svg)](https://github.com/wilderness-cloud/agent/actions/workflows/ci.yml)
+[![CI](https://github.com/getnabbed/agent/actions/workflows/ci.yml/badge.svg)](https://github.com/getnabbed/agent/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/getnabbed/agent.svg)](https://pkg.go.dev/github.com/getnabbed/agent)
 [![Go Report Card](https://goreportcard.com/badge/github.com/getnabbed/agent)](https://goreportcard.com/report/github.com/getnabbed/agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -18,7 +18,7 @@ docker run -d --name nabbed-agent --restart unless-stopped \
   -v "$PWD/downloads:/downloads" \
   -p 6881:6881 -p 6881:6881/udp \
   --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
-  ghcr.io/wilderness-cloud/agent:0.1
+  ghcr.io/getnabbed/agent:0.1
 
 docker logs -f nabbed-agent   # shows the pairing code on first start
 ```
@@ -38,7 +38,7 @@ A ready-to-use [Compose file](contrib/docker/compose.yaml) applies the same
 hardening:
 
 ```sh
-curl -O https://raw.githubusercontent.com/wilderness-cloud/agent/main/contrib/docker/compose.yaml
+curl -O https://raw.githubusercontent.com/getnabbed/agent/main/contrib/docker/compose.yaml
 docker compose up -d && docker compose logs -f agent
 ```
 
@@ -149,7 +149,7 @@ the provider allows fewer, the agent notices and uses fewer.
 ## Other ways to install
 
 Signed binaries for Linux (amd64, arm64, armv7), macOS and Windows are on
-each [GitHub release](https://github.com/wilderness-cloud/agent/releases), with a
+each [GitHub release](https://github.com/getnabbed/agent/releases), with a
 hardened systemd unit in `contrib/systemd/`. With a Go toolchain:
 
 ```sh
@@ -169,22 +169,27 @@ run from an unreviewed branch.
 
 ```sh
 VERSION=1.2.3
-IDENTITY="https://github.com/wilderness-cloud/agent/.github/workflows/release.yml@refs/tags/v$VERSION"
+IDENTITY="https://github.com/getnabbed/agent/.github/workflows/release.yml@refs/tags/v$VERSION"
 ISSUER=https://token.actions.githubusercontent.com
 
 # Archives: build provenance, then the signed checksum file.
-gh attestation verify agent_${VERSION}_linux_amd64.tar.gz --repo wilderness-cloud/agent \
-  --signer-workflow wilderness-cloud/agent/.github/workflows/release.yml
+gh attestation verify agent_${VERSION}_linux_amd64.tar.gz --repo getnabbed/agent \
+  --signer-workflow getnabbed/agent/.github/workflows/release.yml
 cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
   --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" \
   --certificate-github-workflow-trigger push
 sha256sum --ignore-missing -c checksums.txt
 
 # Container image.
-cosign verify ghcr.io/wilderness-cloud/agent:$VERSION \
+cosign verify ghcr.io/getnabbed/agent:$VERSION \
   --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" \
   --certificate-github-workflow-trigger push
 ```
+
+Release 0.1.0 was published before the repository moved to `getnabbed`.
+Its image is `ghcr.io/wilderness-cloud/agent:0.1.0`, and it verifies with
+`wilderness-cloud/agent` in place of `getnabbed/agent` in the identity and
+the `gh attestation` flags.
 
 ## Usage
 
@@ -253,9 +258,9 @@ debugging unreleased changes. Dev images are not releases: don't run them
 for anything you rely on.
 
 ```sh
-docker pull ghcr.io/wilderness-cloud/agent:main               # newest main
-docker pull ghcr.io/wilderness-cloud/agent:main-<sha12>       # one commit
-helm upgrade --install nabbed-agent oci://ghcr.io/wilderness-cloud/charts/nabbed-agent \
+docker pull ghcr.io/getnabbed/agent:main               # newest main
+docker pull ghcr.io/getnabbed/agent:main-<sha12>       # one commit
+helm upgrade --install nabbed-agent oci://ghcr.io/getnabbed/charts/nabbed-agent \
   --set image.tag=main --set image.pullPolicy=Always
 ```
 
@@ -263,8 +268,8 @@ The agent reports its version as `0.0.0-main.<sha12>`. Dev images are signed
 by the CI workflow on `main`, not the release workflow:
 
 ```sh
-cosign verify ghcr.io/wilderness-cloud/agent:main \
-  --certificate-identity https://github.com/wilderness-cloud/agent/.github/workflows/ci.yml@refs/heads/main \
+cosign verify ghcr.io/getnabbed/agent:main \
+  --certificate-identity https://github.com/getnabbed/agent/.github/workflows/ci.yml@refs/heads/main \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 

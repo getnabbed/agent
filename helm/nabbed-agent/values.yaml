@@ -5,7 +5,7 @@
 # download to one of them. See README.md in this chart.
 
 image:
-  repository: ghcr.io/wilderness-cloud/agent
+  repository: ghcr.io/getnabbed/agent
   # Defaults to the chart's appVersion, the agent release it pins.
   tag: ""
   # Pin an exact image, for example "sha256:...". Overrides tag.
