@@ -252,14 +252,34 @@ func TestHandshakeCommandAndTokenExpiringReconnect(t *testing.T) {
 }
 
 func TestRevokedStopsRun(t *testing.T) {
-	c, _, _, _ := start(t, func(_ int, srv pb.AgentGatewayService_ConnectServer) error {
-		_ = srv.Send(welcome(1000))
-		return srv.Send(goAway(pb.GoAwayReason_GO_AWAY_REASON_REVOKED))
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := c.Run(ctx); !errors.Is(err, ErrRevoked) {
-		t.Fatalf("Run err = %v, want ErrRevoked", err)
+	for _, tc := range []struct {
+		name        string
+		sendWelcome bool
+	}{
+		{"after welcome", true},
+		{"instead of welcome", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var conns atomic.Int32
+			c, _, _, _ := start(t, func(_ int, srv pb.AgentGatewayService_ConnectServer) error {
+				conns.Add(1)
+				if tc.sendWelcome {
+					_ = srv.Send(welcome(1000))
+				}
+
+				return srv.Send(goAway(pb.GoAwayReason_GO_AWAY_REASON_REVOKED))
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := c.Run(ctx); !errors.Is(err, ErrRevoked) {
+				t.Fatalf("Run err = %v, want ErrRevoked", err)
+			}
+
+			// No reconnect: a revoked agent must not hammer the gateway.
+			if n := conns.Load(); n != 1 {
+				t.Fatalf("got %d connections, want 1", n)
+			}
+		})
 	}
 }
 

@@ -34,10 +34,19 @@ type fakeAPI struct {
 	refreshes    int
 	omitGateway  bool // answer the token poll without gateway_url
 	numericIDs   bool // send tenant_id as a JSON number, as cloud-api does
+
+	// Device flow: codes are single use, as in cloud-api.
+	authorizes    int
+	consumed      map[string]bool
+	tokenPolls    int
+	dropNextToken bool // lose the response to the poll that redeems the code
+	serverErrors  int  // answer this many polls with 500 server_error
+	rejectAll     bool // answer every poll with invalid_grant
+	expiresIn     int  // expires_in of issued codes; 0 omits it
 }
 
 func newFakeAPI(t *testing.T) *fakeAPI {
-	f := &fakeAPI{t: t, spent: map[string]string{}, replay: map[string]map[string]string{}}
+	f := &fakeAPI{t: t, spent: map[string]string{}, replay: map[string]map[string]string{}, consumed: map[string]bool{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/device/authorize", f.authorize)
 	mux.HandleFunc("POST /api/device/token", f.token)
@@ -75,8 +84,10 @@ func (f *fakeAPI) authorize(w http.ResponseWriter, r *http.Request) {
 
 	f.mu.Lock()
 	f.pub = pub
+	f.authorizes++
+	dc := fmt.Sprintf("dc-%d", f.authorizes)
 	f.mu.Unlock()
-	writeJSON(w, 200, AuthorizeResponse{DeviceCode: "dc", UserCode: "ABCD-EFGH", VerificationURI: "http://" + r.Host + "/device", Interval: 1})
+	writeJSON(w, 200, AuthorizeResponse{DeviceCode: dc, UserCode: "ABCD-EFGH", VerificationURI: "http://" + r.Host + "/device", ExpiresIn: f.expiresIn, Interval: 1})
 }
 
 func (f *fakeAPI) token(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +102,18 @@ func (f *fakeAPI) token(w http.ResponseWriter, r *http.Request) {
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.tokenPolls++
+	if f.serverErrors > 0 {
+		f.serverErrors--
+		writeJSON(w, 500, map[string]string{"error": "server_error"})
+		return
+	}
+
+	if f.rejectAll || f.consumed[req["device_code"]] {
+		writeJSON(w, 400, map[string]string{"error": "invalid_grant"})
+		return
+	}
+
 	if f.pendingPolls > 0 {
 		f.pendingPolls--
 		writeJSON(w, 400, map[string]string{"error": "authorization_pending"})
@@ -101,6 +124,15 @@ func (f *fakeAPI) token(w http.ResponseWriter, r *http.Request) {
 	gw := "https://gw.example"
 	if f.omitGateway {
 		gw = ""
+	}
+
+	f.consumed[req["device_code"]] = true
+	if f.dropNextToken {
+		f.dropNextToken = false
+		hj, _ := w.(http.Hijacker)
+		conn, _, _ := hj.Hijack()
+		_ = conn.Close()
+		return
 	}
 
 	if f.numericIDs {

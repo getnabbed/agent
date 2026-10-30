@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"path/filepath"
@@ -396,5 +397,119 @@ func TestWireIDRejectsFractions(t *testing.T) {
 	var w WireID
 	if err := w.UnmarshalJSON([]byte("4.5")); err == nil {
 		t.Fatalf("got WireID = %q, want an error", w)
+	}
+}
+
+func TestPairStartsOverWhenApprovalResponseIsLost(t *testing.T) {
+	f := newFakeAPI(t)
+	f.dropNextToken = true
+
+	id, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var codes []string
+	c := NewClient(f.url(), f.srv.Client(), "test")
+	tr, err := Pair(context.Background(), c, id, PairOptions{
+		ClientName: "t", Sleep: noSleep, Log: quiet,
+		Prompt: func(a *AuthorizeResponse) { codes = append(codes, a.DeviceCode) },
+	})
+	if err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+
+	if tr.AccessToken == "" {
+		t.Fatal("got no access token")
+	}
+
+	// dc-1 was redeemed by the lost poll, retried once (invalid_grant), then
+	// dropped for dc-2.
+	if got, want := strings.Join(codes, ","), "dc-1,dc-2"; got != want {
+		t.Fatalf("got device codes %s, want %s", got, want)
+	}
+
+	if f.tokenPolls != 3 {
+		t.Fatalf("got %d token polls, want 3", f.tokenPolls)
+	}
+}
+
+func TestPairGivesUpAfterRepeatedInvalidGrant(t *testing.T) {
+	f := newFakeAPI(t)
+	f.rejectAll = true
+
+	id, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewClient(f.url(), f.srv.Client(), "test")
+	_, err = Pair(context.Background(), c, id, PairOptions{ClientName: "t", Sleep: noSleep, Log: quiet})
+	if !errors.Is(err, ErrPairingRejected) {
+		t.Fatalf("got err = %v, want ErrPairingRejected", err)
+	}
+
+	// Each code is polled exactly once: invalid_grant is never retried.
+	if f.authorizes != maxPairRounds || f.tokenPolls != maxPairRounds {
+		t.Fatalf("got %d authorizes and %d polls, want %d of each", f.authorizes, f.tokenPolls, maxPairRounds)
+	}
+}
+
+func TestPairRetriesServerErrorsWithBackoff(t *testing.T) {
+	f := newFakeAPI(t)
+	f.serverErrors = 3
+
+	id, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var delays []time.Duration
+	sleep := func(_ context.Context, d time.Duration) error {
+		delays = append(delays, d)
+		return nil
+	}
+
+	c := NewClient(f.url(), f.srv.Client(), "test")
+	if _, err := Pair(context.Background(), c, id, PairOptions{ClientName: "t", Sleep: sleep, Log: quiet}); err != nil {
+		t.Fatalf("Pair: %v", err)
+	}
+
+	if f.authorizes != 1 {
+		t.Fatalf("got %d authorizes, want 1: server_error must not restart pairing", f.authorizes)
+	}
+
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
+	if fmt.Sprint(delays) != fmt.Sprint(want) {
+		t.Fatalf("got delays %v, want %v", delays, want)
+	}
+}
+
+func TestPairStopsPollingOnceCodeLifetimeIsOver(t *testing.T) {
+	f := newFakeAPI(t)
+	f.serverErrors = 1 << 30
+	f.expiresIn = 1
+
+	id, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	polls := 0
+	sleep := func(context.Context, time.Duration) error {
+		polls++
+		if polls > 200 {
+			t.Fatal("still polling a code past its lifetime")
+		}
+
+		time.Sleep(20 * time.Millisecond)
+
+		return nil
+	}
+
+	c := NewClient(f.url(), f.srv.Client(), "test")
+	_, err = Pair(context.Background(), c, id, PairOptions{ClientName: "t", Sleep: sleep, Log: quiet})
+	if !errors.Is(err, ErrPairingExpired) {
+		t.Fatalf("got err = %v, want ErrPairingExpired", err)
 	}
 }

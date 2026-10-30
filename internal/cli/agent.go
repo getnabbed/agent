@@ -403,7 +403,10 @@ func runRun(ctx context.Context, e *env, args []string) int {
 	case err == nil:
 		e.log.Info("agent stopped")
 		return ExitOK
-	case errors.Is(err, link.ErrRevoked), errors.Is(err, auth.ErrReauthRequired):
+	case errors.Is(err, link.ErrRevoked):
+		e.log.Error("this agent was revoked in the web app; run 'agent pair --force' to pair it again", "err", err)
+		return ExitReauth
+	case errors.Is(err, auth.ErrReauthRequired):
 		e.log.Error("agent can no longer authenticate; run 'agent pair --force' to pair it again", "err", err)
 		return ExitReauth
 	default:
