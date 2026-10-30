@@ -22,7 +22,7 @@
 | Runtime hardening | Read-only root, all capabilities dropped, `no-new-privileges`, `/tmp` tmpfs | Documented in the README and set in `contrib/docker/compose.yaml`. The agent needs none of what is removed; SQLite keeps temp data in memory. |
 | Torrent networking | Peers, DHT nodes, trackers and web seeds on local networks are refused unless `torrent.allow_lan` is set; WebTorrent is disabled | Torrent metadata is untrusted: it must not be able to make the agent probe LAN devices, the router or cloud metadata endpoints. |
 | Health check | None in the image | Docker already restarts a dead process. A check that tracked cloud connectivity would restart healthy agents during cloud outages. Revisit with the local control socket. |
-| Helm chart | Own SemVer in `helm/nabbed-agent/Chart.yaml`, released by a `chart/vX.Y.Z` tag. Published to `oci://ghcr.io/wilderness-cloud/charts` (cosign keyless, verified against `chart-release.yml@refs/tags/chart/vX.Y.Z`) and to a Helm repository on GitHub Pages whose `index.yaml` points at the archive on the chart's GitHub release | Chart fixes need no agent release, as with `proto/v*`. OCI is what Helm and Flux prefer, and the HTTPS repository serves tools that cannot use OCI. The archive lives on the release, not on Pages, so each Pages deploy only replaces the index. |
+| Helm chart | Own SemVer in `helm/nabbed-agent/Chart.yaml`, released by a `chart/vX.Y.Z` tag. Published to `oci://ghcr.io/getnabbed/charts` (cosign keyless, verified against `chart-release.yml@refs/tags/chart/vX.Y.Z`) and to a Helm repository on GitHub Pages whose `index.yaml` points at the archive on the chart's GitHub release | Chart fixes need no agent release, as with `proto/v*`. OCI is what Helm and Flux prefer, and the HTTPS repository serves tools that cannot use OCI. The archive lives on the release, not on Pages, so each Pages deploy only replaces the index. |
 | Dev images | Every merge to `main` that passes CI pushes `:main` and `:main-<sha12>`, built from `Dockerfile` and versioned `0.0.0-main.<sha12>`, signed by `ci.yml@refs/heads/main` | Unreleased changes can be tested from `main` without a tag. They never take `latest` or a SemVer tag, and their signing identity differs from a release's, so release verification rejects them. |
 
 ## Repository settings (outside the code)
@@ -30,14 +30,18 @@
 The release gate depends on settings that live in GitHub, not in this
 repository. They must be in place before the first tag:
 
-- **Published names follow the repository, `github.com/wilderness-cloud/agent`.**
-  Images (`ghcr.io/wilderness-cloud/agent`), charts
-  (`ghcr.io/wilderness-cloud/charts`), the Helm repository and the cosign
-  identities all name it, because a workflow's token can publish only under
-  its own owner, and an identity naming another owner would let whoever
-  creates `getnabbed/agent` mint signatures that pass verification. The Go
-  module path stays `github.com/getnabbed/agent`. If the repository moves,
-  every published name and verification identity moves with it.
+- **Published names follow the repository, `github.com/getnabbed/agent`.**
+  Images (`ghcr.io/getnabbed/agent`), charts (`ghcr.io/getnabbed/charts`),
+  the Helm repository and the cosign identities all name it, because a
+  workflow's token can publish only under its own owner, and an identity
+  naming another owner would let whoever holds that name mint signatures
+  that pass verification. If the repository moves, every published name and
+  verification identity moves with it.
+  - Until 30 October 2026 the repository was `wilderness-cloud/agent`.
+    Agent 0.1.0 and charts 0.1.0 and 0.1.1 were published there, as
+    `ghcr.io/wilderness-cloud/agent` and `ghcr.io/wilderness-cloud/charts`,
+    and verify against `github.com/wilderness-cloud/agent` identities.
+    Agent 0.1.1 and chart 0.1.2 are the first under `getnabbed`.
 - **A `release` environment with required reviewers**, limited to the
   `v*` tag pattern.
 - **A tag ruleset** restricting who may create or move `v*` tags.

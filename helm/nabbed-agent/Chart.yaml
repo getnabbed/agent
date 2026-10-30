@@ -2,14 +2,14 @@ apiVersion: v2
 name: nabbed-agent
 description: The Nabbed download agent, one paired agent per StatefulSet replica.
 type: application
-version: 0.1.1
+version: 0.1.2
 # The agent release this chart version runs by default: image.tag
 # defaults to it. Each chart release pins an exact, signed agent.
-appVersion: "0.1.0"
+appVersion: "0.1.1"
 kubeVersion: ">=1.27.0-0"
-home: https://github.com/wilderness-cloud/agent
+home: https://github.com/getnabbed/agent
 sources:
-  - https://github.com/wilderness-cloud/agent
+  - https://github.com/getnabbed/agent
 keywords:
   - nabbed
   - usenet

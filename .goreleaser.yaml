@@ -50,7 +50,7 @@ sboms:
 # Keyless signing with the release workflow's GitHub OIDC identity. Verify
 # against that exact workflow and tag (see README "Verifying a release"):
 #   cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
-#     --certificate-identity https://github.com/wilderness-cloud/agent/.github/workflows/release.yml@refs/tags/vX.Y.Z \
+#     --certificate-identity https://github.com/getnabbed/agent/.github/workflows/release.yml@refs/tags/vX.Y.Z \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 signs:
   - cmd: cosign
@@ -63,7 +63,7 @@ dockers_v2:
     ids: [agent]
     dockerfile: release.Dockerfile
     images:
-      - ghcr.io/wilderness-cloud/agent
+      - ghcr.io/getnabbed/agent
     tags:
       - "{{ .Version }}"
       - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}{{ end }}"
@@ -77,15 +77,15 @@ dockers_v2:
     labels:
       org.opencontainers.image.title: nabbed-agent
       org.opencontainers.image.description: Nabbed download agent
-      org.opencontainers.image.source: https://github.com/wilderness-cloud/agent
+      org.opencontainers.image.source: https://github.com/getnabbed/agent
       org.opencontainers.image.licenses: MIT
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
       org.opencontainers.image.created: "{{ .CommitDate }}"
 
 # Signs the pushed multi-arch images by digest. Verify with:
-#   cosign verify ghcr.io/wilderness-cloud/agent:X.Y.Z \
-#     --certificate-identity https://github.com/wilderness-cloud/agent/.github/workflows/release.yml@refs/tags/vX.Y.Z \
+#   cosign verify ghcr.io/getnabbed/agent:X.Y.Z \
+#     --certificate-identity https://github.com/getnabbed/agent/.github/workflows/release.yml@refs/tags/vX.Y.Z \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 docker_signs:
   - cmd: cosign
@@ -102,6 +102,6 @@ changelog:
 
 release:
   github:
-    owner: wilderness-cloud
+    owner: getnabbed
     name: agent
   prerelease: auto

@@ -8,7 +8,7 @@ separate agent with its own identity, pairing and data volume.
 From the OCI registry:
 
 ```sh
-helm install nabbed oci://ghcr.io/wilderness-cloud/charts/nabbed-agent --version 0.1.1 \
+helm install nabbed oci://ghcr.io/getnabbed/charts/nabbed-agent --version 0.1.2 \
   --namespace nabbed --create-namespace \
   --set config.api_url=https://api.nabbed.example
 ```
@@ -16,8 +16,8 @@ helm install nabbed oci://ghcr.io/wilderness-cloud/charts/nabbed-agent --version
 Or from the Helm repository:
 
 ```sh
-helm repo add nabbed https://wilderness-cloud.github.io/agent
-helm install nabbed nabbed/nabbed-agent --version 0.1.1 \
+helm repo add nabbed https://getnabbed.github.io/agent
+helm install nabbed nabbed/nabbed-agent --version 0.1.2 \
   --namespace nabbed --create-namespace \
   --set config.api_url=https://api.nabbed.example
 ```
@@ -31,15 +31,15 @@ The chart is signed with cosign using the release workflow's GitHub
 identity, as the images are. Verify against the exact workflow and tag:
 
 ```sh
-VERSION=0.1.1
-cosign verify ghcr.io/wilderness-cloud/charts/nabbed-agent:$VERSION \
-  --certificate-identity "https://github.com/wilderness-cloud/agent/.github/workflows/chart-release.yml@refs/tags/chart/v$VERSION" \
+VERSION=0.1.2
+cosign verify ghcr.io/getnabbed/charts/nabbed-agent:$VERSION \
+  --certificate-identity "https://github.com/getnabbed/agent/.github/workflows/chart-release.yml@refs/tags/chart/v$VERSION" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-github-workflow-trigger push
 
 # The archive from the Helm repository or the GitHub release:
-gh attestation verify nabbed-agent-$VERSION.tgz --repo wilderness-cloud/agent \
-  --signer-workflow wilderness-cloud/agent/.github/workflows/chart-release.yml
+gh attestation verify nabbed-agent-$VERSION.tgz --repo getnabbed/agent \
+  --signer-workflow getnabbed/agent/.github/workflows/chart-release.yml
 ```
 
 ## Versions
@@ -58,7 +58,7 @@ an upgrade needs manual steps.
 To release, tag the merged commit on `main`:
 
 ```sh
-git tag -s chart/v0.1.1 -m "Helm chart 0.1.1" && git push origin chart/v0.1.1
+git tag -s chart/v0.1.2 -m "Helm chart 0.1.2" && git push origin chart/v0.1.2
 ```
 
 The `Chart release` workflow checks the chart and checks that the tag
