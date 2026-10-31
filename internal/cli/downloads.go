@@ -59,7 +59,8 @@ func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc 
 	for i, p := range providers {
 		// The colon keeps these ids apart from control-plane source ids.
 		nntp.SetProvider(fmt.Sprintf("local:%d", i+1), p)
-		e.log.Warn("using a usenet provider from configuration; this is temporary until sources are sealed to the agent", "provider", p.String())
+		e.log.Warn("using a usenet provider from configuration; this is temporary until sources are sealed to the agent",
+			"host", p.Host, "port", p.Port, "username", p.Username, "connections", p.Connections, "backup", p.Backup)
 	}
 
 	bt := torrent.New(torrent.Config{ListenPort: f.torrentPort, AllowLAN: f.allowLAN, AllowRanges: f.allowRanges, Log: e.log})

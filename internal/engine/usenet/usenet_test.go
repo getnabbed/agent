@@ -418,6 +418,13 @@ func TestParseProviderURL(t *testing.T) {
 	if strings.Contains(p.String(), "p@ss") {
 		t.Fatal("String leaks the password")
 	}
+
+	var logged bytes.Buffer
+	slog.New(slog.NewJSONHandler(&logged, nil)).Info("provider", "provider", p)
+
+	if out := logged.String(); strings.Contains(out, "p@ss") || !strings.Contains(out, `"host":"news.example.com"`) {
+		t.Fatalf("got log line %s, want the host and no password", out)
+	}
 }
 
 func TestLongNamesLeaveRoomForSuffix(t *testing.T) {
