@@ -71,6 +71,13 @@ func makeTorrent(t *testing.T, payloadDir string, files map[string][]byte, mutat
 	return src, mi
 }
 
+// testKeepAlive bounds a stall in anacrolix (v1.61.0): a connection's
+// writer takes its wake-up signal only after it has looked for work, so a
+// chunk that becomes ready in between waits for the keep-alive timer,
+// a minute by default. That outlasts the 30 s stall timeout of a test with
+// one peer; in production, with a two-hour stall timeout, it is a pause.
+const testKeepAlive = time.Second
+
 // seed starts a seeding client for files, optionally rate limited, and
 // returns its address.
 func seed(t *testing.T, payloadDir string, files map[string][]byte, uploadBps int) (peer string) {
@@ -85,8 +92,10 @@ func seed(t *testing.T, payloadDir string, files map[string][]byte, uploadBps in
 	cfg.Seed = true
 	cfg.NoDHT = true
 	cfg.DisableTrackers = true
+	cfg.KeepAliveTimeout = testKeepAlive
 	cfg.NoDefaultPortForwarding = true
 	cfg.ListenPort = 0
+	cfg.ListenHost = torrent.LoopbackListenHost // no firewall prompt on Windows
 	cfg.Slogger = slog.New(slog.DiscardHandler)
 
 	if uploadBps > 0 {
@@ -119,6 +128,8 @@ func newTestEngine(peer string) *Engine {
 	e := New(Config{Log: slog.New(slog.DiscardHandler), StallTimeout: 30 * time.Second, MetadataTimeout: 30 * time.Second, AllowLAN: true})
 	e.cfg.noDHT = true
 	e.cfg.peerAddrs = []string{peer}
+	e.cfg.loopbackOnly = true
+	e.cfg.keepAlive = testKeepAlive
 
 	return e
 }
@@ -243,6 +254,8 @@ func TestLANPeersBlockedByDefault(t *testing.T) {
 	e := New(Config{Log: slog.New(slog.DiscardHandler), StallTimeout: 2 * time.Second, MetadataTimeout: 5 * time.Second})
 	e.cfg.noDHT = true
 	e.cfg.peerAddrs = []string{peer}
+	e.cfg.loopbackOnly = true
+	e.cfg.keepAlive = testKeepAlive
 
 	defer func() { _ = e.Close() }()
 
@@ -260,6 +273,8 @@ func TestLANPeersBlockedByDefault(t *testing.T) {
 // H1: a zero info hash used to panic inside anacrolix and kill the agent.
 func TestZeroOrV2OnlyMagnetIsRejected(t *testing.T) {
 	e := New(Config{Log: slog.New(slog.DiscardHandler), MetadataTimeout: time.Second})
+	e.cfg.loopbackOnly = true
+
 	defer func() { _ = e.Close() }()
 
 	for _, m := range []string{
