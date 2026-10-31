@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/textproto"
 	"net/url"
@@ -55,6 +56,20 @@ func (p Provider) String() string {
 	}
 
 	return s
+}
+
+// LogValue keeps the password out of logs, should a Provider be logged
+// whole. Callers still log the fields they need: static analysis treats
+// any value built from a Provider as carrying its password.
+func (p Provider) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("host", p.Host),
+		slog.Int("port", p.Port),
+		slog.Bool("tls", p.TLS),
+		slog.String("username", p.Username),
+		slog.Int("connections", p.Connections),
+		slog.Bool("backup", p.Backup),
+	)
 }
 
 // ParseProviderURL parses nntps://user:pass@host:563?connections=8.
