@@ -35,6 +35,10 @@ func (x *extractor) rar(name string) ([]string, error) {
 			return nil, rarError(err)
 		}
 
+		if err := x.count(); err != nil {
+			return nil, err
+		}
+
 		switch {
 		case h.Encrypted:
 			return nil, errEncrypted

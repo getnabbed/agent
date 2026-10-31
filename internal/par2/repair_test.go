@@ -501,7 +501,7 @@ func TestRepairCancelledBeforeStart(t *testing.T) {
 	set := fx.load(t, dir)
 	damage(t, dir, "movie.mkv", set.SliceSize, 3)
 
-	rep := verify(t, dir, set, false, fx.names()...)
+	rep := verify(t, dir, set, fx.names()...)
 
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -598,7 +598,7 @@ func TestRepairNeverReplacesAFileCreatedSinceVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rep := verify(t, dir, set, false, fx.names()...)
+	rep := verify(t, dir, set, fx.names()...)
 	write(t, dir, "movie.nfo", []byte("mine"))
 
 	root, err := os.OpenRoot(dir)

@@ -3,10 +3,13 @@ package library
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
@@ -73,8 +76,8 @@ func TestPlaceModes(t *testing.T) {
 			}
 		}
 
-		if _, err := os.Stat(dst + partialSuffix); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("%v: got a partial file left behind", tc.mode)
+		if left := partials(t, filepath.Dir(dst)); len(left) != 0 {
+			t.Fatalf("%v: got partial files left behind: %v", tc.mode, left)
 		}
 	}
 }
@@ -90,23 +93,29 @@ func TestAutoModeAcrossFileSystems(t *testing.T) {
 }
 
 func TestPlaceNeverOverwritesUnlessReplacing(t *testing.T) {
-	p, media, src := placeSetup(t)
+	for _, mode := range []pb.ImportMode{pb.ImportMode_IMPORT_MODE_COPY, pb.ImportMode_IMPORT_MODE_MOVE, pb.ImportMode_IMPORT_MODE_HARDLINK} {
+		p, media, src := placeSetup(t)
 
-	dst := filepath.Join(media, "ep.mkv")
-	if err := os.WriteFile(dst, []byte("old"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+		dst := filepath.Join(media, "ep.mkv")
+		if err := os.WriteFile(dst, []byte("old"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 
-	if _, err := p.Place(context.Background(), Placement{Src: src, Root: media, Rel: "ep.mkv", Mode: pb.ImportMode_IMPORT_MODE_COPY}); !errors.Is(err, ErrExists) {
-		t.Fatalf("got %v, want ErrExists", err)
-	}
+		if _, err := p.Place(context.Background(), Placement{Src: src, Root: media, Rel: "ep.mkv", Mode: mode}); !errors.Is(err, ErrExists) {
+			t.Fatalf("%v: got %v, want ErrExists", mode, err)
+		}
 
-	if _, err := p.Place(context.Background(), Placement{Src: src, Root: media, Rel: "ep.mkv", Mode: pb.ImportMode_IMPORT_MODE_COPY, Replace: true}); err != nil {
-		t.Fatal(err)
-	}
+		if got, _ := os.ReadFile(dst); string(got) != "old" {
+			t.Fatalf("%v: got %q, want the existing file kept", mode, got)
+		}
 
-	if got, _ := os.ReadFile(dst); string(got) != "video" {
-		t.Fatalf("got %q after replacing", got)
+		if _, err := p.Place(context.Background(), Placement{Src: src, Root: media, Rel: "ep.mkv", Mode: mode, Replace: true}); err != nil {
+			t.Fatalf("%v: %v", mode, err)
+		}
+
+		if got, _ := os.ReadFile(dst); string(got) != "video" {
+			t.Fatalf("%v: got %q after replacing", mode, got)
+		}
 	}
 }
 
@@ -161,5 +170,172 @@ func TestCancelledCopyLeavesNothing(t *testing.T) {
 
 	if ents, _ := os.ReadDir(media); len(ents) != 0 {
 		t.Fatalf("got %d files after a cancelled copy", len(ents))
+	}
+}
+
+// partials lists the partial copies in dir.
+func partials(t *testing.T, dir string) []string {
+	t.Helper()
+
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out []string
+
+	for _, e := range ents {
+		if strings.HasSuffix(e.Name(), partialSuffix) {
+			out = append(out, e.Name())
+		}
+	}
+
+	return out
+}
+
+func TestPlaceIgnoresAPlantedPartialFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+
+	p, media, src := placeSetup(t)
+
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Links at the name copies used to write to, and at a name shaped like
+	// a leftover partial copy, both pointing outside the library.
+	for _, name := range []string{"ep.mkv" + partialSuffix, partialPrefix("ep.mkv") + "00000000" + partialSuffix} {
+		if err := os.Symlink(victim, filepath.Join(media, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := p.Place(context.Background(), Placement{Src: src, Root: media, Rel: "ep.mkv", Mode: pb.ImportMode_IMPORT_MODE_COPY}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, _ := os.ReadFile(victim); string(got) != "keep" {
+		t.Fatalf("got %q in a file outside the library, want it untouched", got)
+	}
+
+	fi, err := os.Stat(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("got mode %v for a file outside the library, want 0600", fi.Mode().Perm())
+	}
+
+	if got, _ := os.ReadFile(filepath.Join(media, "ep.mkv")); string(got) != "video" {
+		t.Fatalf("got %q at the destination", got)
+	}
+}
+
+func TestPlaceRemovesItsOwnLeftoverPartials(t *testing.T) {
+	p, media, src := placeSetup(t)
+
+	stale := filepath.Join(media, partialPrefix("ep.mkv")+"0123abcd"+partialSuffix)
+	other := filepath.Join(media, partialPrefix("other.mkv")+"0123abcd"+partialSuffix)
+
+	for _, f := range []string{stale, other} {
+		if err := os.WriteFile(f, []byte("half"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := p.Place(context.Background(), Placement{Src: src, Root: media, Rel: "ep.mkv", Mode: pb.ImportMode_IMPORT_MODE_COPY}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("got %v for a partial copy of the same file left by a crash, want it removed", err)
+	}
+
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("got %v for another file's partial copy, want it kept", err)
+	}
+}
+
+func TestPartialNamesFit(t *testing.T) {
+	long := strings.Repeat("é", 120) + ".mkv" // 244 bytes, as long as naming allows
+
+	for _, name := range []string{"ep.mkv", long} {
+		a, b := partialName(name), partialName(name)
+		if a == b {
+			t.Fatalf("got the same partial name twice: %q", a)
+		}
+
+		if len(a) > maxNameBytes || !utf8.ValidString(a) || !strings.HasPrefix(a, ".") {
+			t.Fatalf("got %q (%d bytes), want a hidden valid name of at most %d bytes", a, len(a), maxNameBytes)
+		}
+
+		if !isPartial(a, name) || isPartial(a, "x"+name) {
+			t.Fatalf("isPartial(%q) is wrong", a)
+		}
+	}
+}
+
+// openTestFolder opens dir as a destination folder.
+func openTestFolder(t *testing.T, dir string) *folder {
+	t.Helper()
+
+	d, err := openFolder(dir, ".", 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(d.close)
+
+	return d
+}
+
+// The last step of every placement refuses a name taken since Place
+// checked it, as by a concurrent import, instead of replacing the file.
+func TestFolderNeverReplacesWithoutAsking(t *testing.T) {
+	_, media, src := placeSetup(t)
+	d := openTestFolder(t, media)
+
+	taken := filepath.Join(media, "ep.mkv")
+	if err := os.WriteFile(taken, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tmp := partialName("ep.mkv")
+	if err := os.WriteFile(filepath.Join(media, tmp), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, step := range []struct {
+		name string
+		run  func() error
+	}{
+		{"link", func() error { return d.link(src, "ep.mkv", false) }},
+		{"move", func() error { return d.move(src, "ep.mkv", false) }},
+		{"commit", func() error { return d.commit(tmp, "ep.mkv", false) }},
+	} {
+		if err := step.run(); !errors.Is(err, fs.ErrExist) {
+			t.Errorf("%s: got %v, want fs.ErrExist", step.name, err)
+		}
+	}
+
+	if got, _ := os.ReadFile(taken); string(got) != "old" {
+		t.Fatalf("got %q, want the existing file kept", got)
+	}
+
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("got %v, want the download kept after a refused move", err)
+	}
+
+	// Asked to replace, the commit does.
+	if err := d.commit(tmp, "ep.mkv", true); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, _ := os.ReadFile(taken); string(got) != "new" {
+		t.Fatalf("got %q after replacing", got)
 	}
 }

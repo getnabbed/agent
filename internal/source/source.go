@@ -5,7 +5,9 @@
 //
 // The control plane can seal a configuration too, since anyone with the
 // public key can. A source is therefore treated as untrusted input: its
-// host must be public, and dials go through the netguard LAN policy.
+// host must be public, unless the host owner allowed its address in the
+// agent's own configuration (network.allowed_ranges), and dials go through
+// the netguard LAN policy.
 package source
 
 import (
@@ -16,6 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"regexp"
 	"sync"
 	"time"
@@ -34,6 +37,10 @@ const (
 	maxSealedBytes    = 16 << 10
 	maxDisplayNameLen = 128
 	dialTimeout       = 60 * time.Second
+
+	// allowHint tells the user how to allow a local host. It follows
+	// ErrHostBlocked in messages the web app shows.
+	allowHint = "to allow it, add the address to network.allowed_ranges in the agent's config (NABBED_ALLOWED_RANGES) and restart the agent"
 )
 
 var (
@@ -67,6 +74,9 @@ type Config struct {
 	Key    *ecdh.PrivateKey
 	Engine Engine
 	Log    *slog.Logger
+	// AllowRanges are local ranges a source's host may be in, from
+	// network.allowed_ranges. Any other local address is refused.
+	AllowRanges []netip.Prefix
 }
 
 // Manager stores sources and keeps the engine in step with them.
@@ -75,6 +85,8 @@ type Manager struct {
 	key    *ecdh.PrivateKey
 	engine Engine
 	log    *slog.Logger
+	// guard decides which addresses sources may reach.
+	guard netguard.Policy
 
 	mu sync.Mutex
 	// applied fingerprints what the engine holds per source, so a repeated
@@ -100,6 +112,7 @@ func New(cfg Config) *Manager {
 
 	m := &Manager{
 		store: cfg.Store, key: cfg.Key, engine: cfg.Engine,
+		guard:    netguard.Policy{Allow: cfg.AllowRanges},
 		log:      cfg.Log.With("component", "source"),
 		applied:  map[string][sha256.Size]byte{},
 		unusable: map[string]bool{},
@@ -277,14 +290,14 @@ func (m *Manager) open(s *pb.Source) (usenet.Provider, error) {
 
 	defer clear(plain)
 
-	p, err := parseUsenet(plain)
+	p, err := parseUsenet(plain, m.guard)
 	if err != nil {
 		return usenet.Provider{}, err
 	}
 
 	// Checked again at every dial, after DNS: a public name can resolve to
 	// a private address.
-	p.Dial = netguard.Policy{}.Dialer(&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second})
+	p.Dial = m.guard.Dialer(&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second})
 
 	return p, nil
 }

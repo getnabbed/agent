@@ -89,18 +89,37 @@ its outputs in `internal/library/testdata/naming.json` and
    A second extra with the same extension becomes `.2.srt`.
 2. **Render the path.** A TV download needs a season and an episode;
    otherwise the import fails `IMPORT`, not retryable.
-3. **Place each file** inside the root: folders are created through
-   `os.Root`, and the final folder is checked against the policy again.
-   - **MOVE:** rename. Across file systems, copy to a synced
-     `.nabbed-partial`, rename it into place, then delete the download.
-   - **COPY:** the partial-file copy.
-   - **HARDLINK:** a link, falling back to a copy.
+3. **Place each file** inside the root. Folders are created and opened
+   through `os.Root`, so no link leads out of the root. On Unix the file is
+   then written, linked or renamed through the open destination folder,
+   never by path, so a folder on the way that someone swaps for a link
+   afterwards cannot redirect it. File modes are set through the open
+   copy or the download's own path, never the library path.
+   - **MOVE:** rename. Across file systems, copy, then delete the download.
+   - **COPY:** write a partial copy, created exclusively under a hidden,
+     random name (`.<name>.<8 hex>.nabbed-partial`), sync it, then rename
+     it into place. Nothing planted under that name is followed. A rerun
+     first removes partial copies of the same file left by a crash.
+   - **HARDLINK:** a link, falling back to a copy when links fail. A name
+     already taken is a collision, not a reason to copy.
    - **AUTO:** torrents are hard-linked when on the same file system and
      copied otherwise, so they keep seeding. Usenet downloads are moved.
 
-   Existing files are never overwritten. The one exception is a file at
-   `replaces_path` with the same name, and the cloud doesn't send that yet.
-   Nothing in the library is ever deleted.
+   Existing files are never overwritten, including one that appears while
+   the file is being placed, as from a concurrent import: the last step is
+   a link, or a rename that refuses to replace (`renameat2` with
+   `RENAME_NOREPLACE` on Linux, `renameatx_np` with `RENAME_EXCL` on macOS,
+   `MoveFileEx` without `MOVEFILE_REPLACE_EXISTING` on Windows). Where the
+   file system has no such rename (NFS, some FUSE and SMB mounts), a hard
+   link and an unlink stand in for it. Only on file systems with neither
+   (FAT, exFAT) is it a check followed by a rename. On Windows the copy is
+   still written through the open folder, but the link or rename into it
+   uses the folder's path, since Windows has no link or rename relative to
+   an open folder. Directory junctions need no privileges there, so someone
+   who can write to the library could still swap a folder on that path for
+   a junction in the moment before the file lands. The one exception to
+   never overwriting is a file at `replaces_path` with the same name, and
+   the cloud doesn't send that yet. Nothing in the library is ever deleted.
 4. **Record and report:** write `import.json` in the work directory, then
    return `ImportCompleted{download_id, root_id, files (relative to the
    root, extras included), quality}`. The manager queues it in the same

@@ -146,6 +146,10 @@ func (x *extractor) sevenZip(name string) ([]string, error) {
 	}
 
 	for _, f := range r.File {
+		if err := x.count(); err != nil {
+			return nil, err
+		}
+
 		mode := f.Mode()
 
 		switch {

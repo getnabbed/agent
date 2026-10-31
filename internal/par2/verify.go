@@ -70,10 +70,6 @@ type VerifyOptions struct {
 	// Target returns the path a recovery-set file should have among the
 	// candidates, so a damaged file can be found under its real name.
 	Target func(*File) string
-	// Quick accepts a file whose size and 16 KiB hash match without hashing
-	// all of it. Use it only when the data is otherwise known to be intact,
-	// such as usenet downloads where every article passed its yEnc CRC.
-	Quick bool
 }
 
 type candidate struct {
@@ -135,8 +131,6 @@ func Verify(ctx context.Context, fsys fs.FS, set *Set, candidates []string, o Ve
 			}
 		}
 
-		matched16k := found != ""
-
 		if found == "" {
 			if _, ok := byPath[target]; ok && !used[target] {
 				found = target
@@ -150,7 +144,7 @@ func Verify(ctx context.Context, fsys fs.FS, set *Set, candidates []string, o Ve
 
 		used[found] = true
 
-		res, err := check(ctx, fsys, found, f, set.SliceSize, o.Quick && matched16k)
+		res, err := check(ctx, fsys, found, f, set.SliceSize)
 		if err != nil {
 			return nil, err
 		}
@@ -171,7 +165,7 @@ func Verify(ctx context.Context, fsys fs.FS, set *Set, candidates []string, o Ve
 				continue
 			}
 
-			res, err := check(ctx, fsys, c.path, r.File, set.SliceSize, false)
+			res, err := check(ctx, fsys, c.path, r.File, set.SliceSize)
 			if err != nil {
 				return nil, err
 			}
@@ -233,13 +227,11 @@ func describe(fsys fs.FS, p string) (candidate, error) {
 	return c, nil
 }
 
-// check compares the file at p with f slice by slice. quick trusts an
-// exact size and 16k match.
-func check(ctx context.Context, fsys fs.FS, p string, f *File, sliceSize int64, quick bool) (FileResult, error) {
+// check compares the file at p with f slice by slice and as a whole. A
+// matching size and first 16 KiB only find the candidate; every byte is
+// hashed before a file counts as OK.
+func check(ctx context.Context, fsys fs.FS, p string, f *File, sliceSize int64) (FileResult, error) {
 	res := FileResult{File: f, Found: p, Status: OK}
-	if quick {
-		return res, nil
-	}
 
 	r, err := fsys.Open(p)
 	if err != nil {

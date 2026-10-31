@@ -1,8 +1,10 @@
 // Package netguard decides which IP addresses the agent may talk to on
 // behalf of untrusted input, such as a torrent's peers, trackers and web
-// seeds. By default it refuses anything on the user's local network, so a
-// hostile torrent cannot make the agent probe or attack LAN devices, the
-// router, or cloud metadata endpoints.
+// seeds, or a usenet source configured from the web app. By default it
+// refuses anything on the user's local network, so a hostile torrent or
+// control plane cannot make the agent probe or attack LAN devices, the
+// router, or cloud metadata endpoints. The host owner can allow chosen
+// local ranges in the agent's own configuration (Policy.Allow).
 //
 // Checks run against the address actually being connected to, after DNS
 // resolution, so a hostname that resolves to a private address (DNS
@@ -15,6 +17,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 	"syscall"
 )
 
@@ -37,8 +40,10 @@ var local = mustPrefixes(
 	"240.0.0.0/4",    // reserved, includes 255.255.255.255
 	"::/128",         // unspecified
 	"::1/128",        // loopback
+	"64:ff9b:1::/48", // local-use NAT64 (RFC 8215); where it maps IPv4 varies, so all of it
 	"fc00::/7",       // unique local
 	"fe80::/10",      // link-local
+	"fec0::/10",      // site-local, deprecated but still routed on some networks
 	"ff00::/8",       // multicast
 )
 
@@ -51,18 +56,20 @@ func mustPrefixes(ss ...string) []netip.Prefix {
 	return out
 }
 
-// nat64 maps IPv4 into IPv6 (RFC 6052); the embedded address is checked.
+// nat64 is the well-known NAT64 prefix (RFC 6052), which maps IPv4 into
+// the low 32 bits; the embedded address is checked. Its local-use
+// counterpart is blocked outright, in local.
 var nat64 = netip.MustParsePrefix("64:ff9b::/96")
 
 // IsLocal reports whether ip is on a local, private or special-purpose
-// network.
+// network. An address with a zone, such as fe80::1%eth0 or ::1%lo, is
+// scoped to one interface, so it is always local whatever its bits say.
 func IsLocal(ip netip.Addr) bool {
-	ip = ip.Unmap()
-
-	if ip.Is6() && nat64.Contains(ip) {
-		b := ip.As16()
-		ip = netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
+	if ip.Zone() != "" {
+		return true
 	}
+
+	ip = reached(ip)
 
 	for _, p := range local {
 		if p.Contains(ip) {
@@ -73,18 +80,102 @@ func IsLocal(ip netip.Addr) bool {
 	return false
 }
 
+// reached returns the IPv4 address that ip stands for when it maps one
+// (::ffff:a.b.c.d) or translates to one through well-known NAT64, and ip
+// otherwise.
+func reached(ip netip.Addr) netip.Addr {
+	ip = ip.Unmap()
+
+	if ip.Is6() && nat64.Contains(ip) {
+		b := ip.As16()
+		ip = netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
+	}
+
+	return ip
+}
+
 // Ranges returns the local ranges, for libraries that take a blocklist.
 func Ranges() []netip.Prefix { return append([]netip.Prefix(nil), local...) }
+
+// ParseRanges parses ranges for Policy.Allow: CIDR ranges such as
+// 192.168.1.0/24 or fd00:1::/64, or single addresses such as 192.168.1.10.
+// Blank entries are skipped, and IPv4-mapped IPv6 forms become IPv4. A
+// range with bits set past its length, such as 192.168.1.10/24, is refused,
+// since it is unclear whether one address or the whole network was meant.
+func ParseRanges(ss []string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+
+	for _, s := range ss {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+
+		if !strings.Contains(s, "/") {
+			a, err := netip.ParseAddr(s)
+			if err != nil {
+				return nil, fmt.Errorf("%q is not an IP address or CIDR range: %w", s, err)
+			}
+
+			if a.Zone() != "" {
+				return nil, fmt.Errorf("%q has a zone; write the address without it", s)
+			}
+
+			a = a.Unmap()
+			out = append(out, netip.PrefixFrom(a, a.BitLen()))
+
+			continue
+		}
+
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not a CIDR range: %w", s, err)
+		}
+
+		if m := p.Masked(); m != p {
+			return nil, fmt.Errorf("%q has bits set past /%d: write %s for the network, or %s for one address",
+				s, p.Bits(), m, netip.PrefixFrom(p.Addr(), p.Addr().BitLen()))
+		}
+
+		if p.Addr().Is4In6() && p.Bits() >= 96 {
+			p = netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
+		}
+
+		out = append(out, p)
+	}
+
+	return out, nil
+}
 
 // Policy is a connection policy.
 type Policy struct {
 	// AllowLAN permits local and private addresses.
 	AllowLAN bool
+	// Allow lists ranges the host owner lets the agent contact even though
+	// they are local, such as a seedbox or a usenet server on the LAN. It
+	// comes from the agent's own configuration, never from the cloud. An
+	// IPv4 range also covers its addresses reached through IPv4-mapped or
+	// well-known NAT64 IPv6 addresses.
+	Allow []netip.Prefix
 }
 
 // Allowed reports whether ip may be contacted.
 func (p Policy) Allowed(ip netip.Addr) bool {
-	return p.AllowLAN || !IsLocal(ip)
+	return p.AllowLAN || !IsLocal(ip) || p.allows(ip)
+}
+
+// allows reports whether ip is in one of the owner's ranges.
+func (p Policy) allows(ip netip.Addr) bool {
+	ip = ip.WithZone("")
+	via := reached(ip)
+
+	for _, r := range p.Allow {
+		if r.Contains(ip) || r.Contains(via) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (p Policy) check(address string) error {

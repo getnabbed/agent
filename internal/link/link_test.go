@@ -17,6 +17,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/resolver"
+	"google.golang.org/grpc/resolver/manual"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
@@ -149,11 +151,21 @@ func start(t *testing.T, script func(int, pb.AgentGatewayService_ConnectServer) 
 
 	t.Cleanup(func() { _ = st.Close() })
 
+	// gRPC looks the gateway's host up in DNS before it dials, even though
+	// the dialer below ignores the address. Answer the lookup here, so a slow
+	// or failing system resolver (seen on macOS runners) cannot stall every
+	// later test while gRPC backs off re-resolving.
+	r := manual.NewBuilderWithScheme("dns")
+	r.InitialState(resolver.State{Addresses: []resolver.Address{{Addr: "bufconn"}}})
+
 	toks := &fakeTokens{}
 	c, err := New(Config{
-		GatewayURL:  "http://localhost:1",
-		DialOptions: []grpc.DialOption{grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) })},
-		Tokens:      toks, Signer: id, State: st, Handler: command.New(command.Config{Store: st, Log: slog.New(slog.DiscardHandler)}), Outbox: st,
+		GatewayURL: "http://localhost:1",
+		DialOptions: []grpc.DialOption{
+			grpc.WithResolvers(r),
+			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		},
+		Tokens: toks, Signer: id, State: st, Handler: command.New(command.Config{Store: st, Log: slog.New(slog.DiscardHandler)}), Outbox: st,
 		Logger:  slog.New(slog.DiscardHandler),
 		Version: "test", OS: "test",
 		MinBackoff: time.Millisecond, MaxBackoff: 5 * time.Millisecond, HelloTimeout: time.Second,
@@ -181,7 +193,11 @@ func nextConn(t *testing.T, g *gateway) connInfo {
 func TestHandshakeCommandAndTokenExpiringReconnect(t *testing.T) {
 	results := make(chan *pb.CommandResult, 1)
 	c, g, _, _ := start(t, func(n int, srv pb.AgentGatewayService_ConnectServer) error {
-		if err := srv.Send(welcome(20)); err != nil {
+		// A slow heartbeat: the agent drops a stream after three unanswered
+		// ones, and this fake gateway, unlike the real one, does not redeliver
+		// a command lost with the stream. At 20 ms a busy runner's stall of
+		// 60 ms was enough to lose the result.
+		if err := srv.Send(welcome(1000)); err != nil {
 			return err
 		}
 
@@ -193,9 +209,6 @@ func TestHandshakeCommandAndTokenExpiringReconnect(t *testing.T) {
 			return err
 		}
 
-		// Ack heartbeats while waiting: at 20 ms the agent drops a stream
-		// after three unanswered ones, which a slow runner reaches before the
-		// result is sent, and the result is then lost with the stream.
 		for {
 			m, err := srv.Recv()
 			if err != nil {
@@ -567,7 +580,9 @@ func TestCapabilityChangeSendsNewHelloAfterResult(t *testing.T) {
 
 	results := make(chan *pb.CommandResult, 1)
 	c, g, _, _ := start(t, func(n int, srv pb.AgentGatewayService_ConnectServer) error {
-		if err := srv.Send(welcome(20)); err != nil {
+		// Slow heartbeats, as in TestHandshakeCommandAndTokenExpiringReconnect:
+		// a stream dropped for missed acks would lose the result.
+		if err := srv.Send(welcome(1000)); err != nil {
 			return err
 		}
 

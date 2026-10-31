@@ -22,10 +22,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"go.yaml.in/yaml/v3"
 
 	"github.com/getnabbed/agent/internal/logging"
+	"github.com/getnabbed/agent/internal/netguard"
 	"github.com/getnabbed/agent/internal/paths"
 )
 
@@ -59,6 +61,14 @@ type Config struct {
 		// local network. Off by default: torrent metadata is untrusted.
 		AllowLAN bool `yaml:"allow_lan"`
 	} `yaml:"torrent"`
+
+	Network struct {
+		// AllowedRanges are local addresses that torrents and usenet sources
+		// from the web app may reach, though both are otherwise kept off the
+		// local network: CIDR ranges or single addresses. The cloud cannot
+		// change them.
+		AllowedRanges []string `yaml:"allowed_ranges"`
+	} `yaml:"network"`
 
 	Usenet struct {
 		// Provider is temporary until sources are sealed to the agent.
@@ -231,6 +241,10 @@ var Env = []envVar{
 	{"NABBED_MAX_DOWNLOADS", num("NABBED_MAX_DOWNLOADS", func(c *Config) *int { return &c.Downloads.MaxConcurrent })},
 	{"NABBED_TORRENT_PORT", num("NABBED_TORRENT_PORT", func(c *Config) *int { return &c.Torrent.Port })},
 	{"NABBED_TORRENT_ALLOW_LAN", boolean("NABBED_TORRENT_ALLOW_LAN", func(c *Config) *bool { return &c.Torrent.AllowLAN })},
+	{"NABBED_ALLOWED_RANGES", func(c *Config, v string) error {
+		c.Network.AllowedRanges = strings.FieldsFunc(v, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
+		return nil
+	}},
 	{"NABBED_NNTP", func(c *Config, v string) error { c.Usenet.Provider = Secret(v); return nil }},
 	{"NABBED_LIBRARY_ROOTS", func(c *Config, v string) error { c.Library.AllowedRoots = filepath.SplitList(v); return nil }},
 	{"NABBED_LIBRARY_FILE_MODE", str(func(c *Config) *string { return &c.Library.FileMode })},
@@ -302,6 +316,10 @@ func (c *Config) Finish() error {
 
 	if c.Torrent.Port < 0 || c.Torrent.Port > 65535 {
 		return fmt.Errorf("torrent.port must be 0-65535, got %d", c.Torrent.Port)
+	}
+
+	if _, err := netguard.ParseRanges(c.Network.AllowedRanges); err != nil {
+		return fmt.Errorf("network.allowed_ranges (NABBED_ALLOWED_RANGES): %w", err)
 	}
 
 	if c.APIURL != "" {

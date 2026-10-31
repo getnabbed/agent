@@ -11,8 +11,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/getnabbed/agent/internal/engine"
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
@@ -129,6 +131,24 @@ func TestYEncRejectsCorruption(t *testing.T) {
 	}
 }
 
+func TestYEncRejectsAnUnreadableChecksum(t *testing.T) {
+	art := EncodeYEnc("f.bin", 100, 1, []byte("hello world"), 1, 1)
+	i := bytes.Index(art, []byte("pcrc32=")) + len("pcrc32=")
+
+	for _, crc := range []string{"zzzzzzzz", "", "1234567890"} {
+		bad := slices.Concat(art[:i], []byte(crc), []byte("\r\n"))
+		if _, err := DecodeYEnc(bytes.NewReader(bad)); !errors.Is(err, ErrYEncCRC) {
+			t.Fatalf("pcrc32=%q: got %v, want ErrYEncCRC", crc, err)
+		}
+	}
+
+	// No checksum at all is allowed; PAR2 verifies the file.
+	noCRC := slices.Concat(art[:i-len("pcrc32=")], []byte("\r\n"))
+	if _, err := DecodeYEnc(bytes.NewReader(noCRC)); err != nil {
+		t.Fatalf("got %v for a part without a checksum, want it accepted", err)
+	}
+}
+
 // buildJob posts files to the fake server and writes a matching NZB.
 func buildJob(t *testing.T, s *fakeNNTP, files map[string][]byte, partSize int, drop map[string]bool) (engine.Job, map[string][]byte) {
 	t.Helper()
@@ -223,6 +243,95 @@ func TestDownloadAssemblesFiles(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(job.Dir, "m.vol00+01.par2")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("deferred par2 volume was downloaded")
+	}
+}
+
+// No article is fetched without a transfer slot, and a freed slot lets the
+// download go on.
+func TestTransferSlotsGateArticles(t *testing.T) {
+	s := newFakeNNTP(t, "", "")
+	e := newTestEngine(t, s.provider("", "", 8))
+	e.transfers = make(chan struct{}, 1)
+	e.transfers <- struct{}{} // another download holds the only slot
+
+	job, files := buildJob(t, s, map[string][]byte{"movie.mkv": randBytes(64_000)}, 4_000, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	if _, err := e.Download(ctx, job, nil); !errors.Is(err, context.DeadlineExceeded) || s.bodies.Load() != 0 {
+		t.Fatalf("got %v after %d articles with no slot free, want the deadline and no articles", err, s.bodies.Load())
+	}
+
+	<-e.transfers
+
+	res, err := e.Download(context.Background(), job, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(job.Dir, res.Files[0].Path))
+	if err != nil || !bytes.Equal(got, files["movie.mkv"]) {
+		t.Fatalf("got err = %v or different content once the slot was free", err)
+	}
+
+	if n := len(e.transfers); n != 0 {
+		t.Fatalf("got %d transfer slots still taken, want all returned", n)
+	}
+}
+
+// A slot is taken only with a connection in hand, so a download stuck
+// dialling a provider that hangs holds none, and a download on a working
+// provider still finishes.
+func TestAHungProviderHoldsNoTransferSlot(t *testing.T) {
+	hung := newStallServer(t)
+	good := newFakeNNTP(t, "", "")
+
+	e := New(slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { _ = e.Close() })
+
+	e.transfers = make(chan struct{}, 1)
+	e.SetProvider("hung", hung.provider(1))
+	e.SetProvider("good", good.provider("", "", 4))
+
+	stuck, _ := buildJob(t, good, map[string][]byte{"a.mkv": randBytes(8_000)}, 4_000, nil)
+	stuck.SourceID = "hung"
+
+	job, files := buildJob(t, good, map[string][]byte{"b.mkv": randBytes(64_000)}, 4_000, nil)
+	job.SourceID = "good"
+
+	stuckCtx, stopStuck := context.WithCancel(context.Background())
+	defer stopStuck()
+
+	stuckDone := make(chan error, 1)
+	go func() {
+		_, err := e.Download(stuckCtx, stuck, nil)
+		stuckDone <- err
+	}()
+
+	select {
+	case <-hung.accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stuck download never dialled the hung provider")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res, err := e.Download(ctx, job, nil)
+	if err != nil {
+		t.Fatalf("got %v while another download waits on a hung provider, want the download to finish", err)
+	}
+
+	if got, err := os.ReadFile(filepath.Join(job.Dir, res.Files[0].Path)); err != nil || !bytes.Equal(got, files["b.mkv"]) {
+		t.Fatalf("got err = %v or different content", err)
+	}
+
+	stopStuck()
+	hung.close()
+
+	if err := <-stuckDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v from the stuck download, want it cancelled", err)
 	}
 }
 

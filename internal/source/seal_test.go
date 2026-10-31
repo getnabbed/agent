@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"testing"
+
+	"github.com/getnabbed/agent/internal/netguard"
 )
 
 // A box made by libsodium 1.0.20 (libsodium-wrappers, crypto_box_seal), as
@@ -40,7 +42,7 @@ func TestOpensLibsodiumSealedBox(t *testing.T) {
 		t.Fatalf("got plaintext %q, want %q", plain, vectorPlaintext)
 	}
 
-	p, err := parseUsenet(plain)
+	p, err := parseUsenet(plain, netguard.Policy{})
 	if err != nil || p.Host != "news.newshosting.com" || p.Username != "vector-user" || p.Password != "vector-pass" || p.Connections != 8 {
 		t.Fatalf("got provider %+v, err %v", p, err)
 	}

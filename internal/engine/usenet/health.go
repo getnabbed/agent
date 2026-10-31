@@ -147,7 +147,7 @@ func Describe(err error) string {
 			s += " " + err.Error()[i:]
 		}
 	case errors.Is(err, netguard.ErrBlocked):
-		s = "the host resolves to a local network address, which sources from the web app may not use"
+		s = "the host resolves to a local network address, which sources from the web app may not use unless network.allowed_ranges in the agent's config allows it"
 	case errors.Is(err, errCapacity):
 		s = "the provider refused the connection: too many connections are open for this account"
 	case errors.As(err, &dns):

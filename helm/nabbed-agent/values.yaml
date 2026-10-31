@@ -39,6 +39,13 @@ config:
     max_concurrent: 3
   torrent:
     allow_lan: false
+  network:
+    # Local addresses that torrents and usenet sources from the web app may
+    # reach anyway, as single addresses or CIDR networks, such as the
+    # Service IP of a usenet server in the cluster. Prefer single addresses:
+    # a hostile torrent can reach anything in an allowed range too, so
+    # allowing the whole Service or Pod range exposes every service.
+    allowed_ranges: []
   library:
     # Added to the roots derived from volumes.<name>.libraryRoots.
     allowed_roots: []

@@ -120,6 +120,36 @@ func TestFinishDerivesAndValidates(t *testing.T) {
 	}
 }
 
+func TestAllowedRanges(t *testing.T) {
+	p := write(t, "network:\n  allowed_ranges: [192.168.1.10, \"fd00:1::/64\"]\n")
+
+	c, _, err := Load(p, env(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.Finish(); err != nil || strings.Join(c.Network.AllowedRanges, " ") != "192.168.1.10 fd00:1::/64" {
+		t.Fatalf("got %q, %v from the file", c.Network.AllowedRanges, err)
+	}
+
+	// The environment replaces the file's list; commas and spaces both separate.
+	c, _, err = Load(p, env(map[string]string{"NABBED_ALLOWED_RANGES": "10.0.0.0/24, 10.0.1.5 fd00::/8"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Join(c.Network.AllowedRanges, " ") != "10.0.0.0/24 10.0.1.5 fd00::/8" {
+		t.Fatalf("got %q from the environment", c.Network.AllowedRanges)
+	}
+
+	bad := Default()
+	bad.Network.AllowedRanges = []string{"192.168.1.10/24"}
+
+	if err := bad.Finish(); err == nil || !strings.Contains(err.Error(), "network.allowed_ranges") || !strings.Contains(err.Error(), "192.168.1.0/24") {
+		t.Fatalf("got %v, want an error naming the setting and the network meant", err)
+	}
+}
+
 func TestRedactedHidesSecrets(t *testing.T) {
 	c := Default()
 	c.Usenet.Provider = "nntps://user:hunter2@news.example"

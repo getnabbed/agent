@@ -114,9 +114,16 @@ func DecodeYEnc(body io.Reader) (*Part, error) {
 		crcKey = "crc32"
 	}
 
+	// The checksum is optional, but one that is present must parse: a
+	// garbled one would otherwise pass the part unchecked. It counts as a
+	// mismatch, so the article is tried on the next provider.
 	if want, ok := yendKV[crcKey]; ok {
 		w, err := strconv.ParseUint(strings.TrimSpace(want), 16, 32)
-		if err == nil && uint32(w) != crc32.ChecksumIEEE(data.Bytes()) {
+		if err != nil {
+			return nil, fmt.Errorf("%w: unreadable %s %q", ErrYEncCRC, crcKey, truncateRunes(want, 16))
+		}
+
+		if uint32(w) != crc32.ChecksumIEEE(data.Bytes()) {
 			return nil, ErrYEncCRC
 		}
 	}

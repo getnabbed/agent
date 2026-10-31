@@ -40,7 +40,9 @@ type Credentials struct {
 
 var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.?$`)
 
-func parseUsenet(plain []byte) (usenet.Provider, error) {
+// parseUsenet parses a sealed usenet configuration. guard decides which
+// IP addresses the host may be; names are checked again at every dial.
+func parseUsenet(plain []byte, guard netguard.Policy) (usenet.Provider, error) {
 	var c UsenetConfig
 
 	dec := json.NewDecoder(bytes.NewReader(plain))
@@ -66,7 +68,7 @@ func parseUsenet(plain []byte) (usenet.Provider, error) {
 
 	host := strings.ToLower(strings.TrimSpace(c.Host))
 
-	if err := checkHost(host); err != nil {
+	if err := checkHost(host, guard); err != nil {
 		return usenet.Provider{}, err
 	}
 
@@ -119,16 +121,18 @@ func parseUsenet(plain []byte) (usenet.Provider, error) {
 	}, nil
 }
 
-// checkHost accepts a public DNS name or IP address. Names are checked
-// again after resolution, at dial time.
-func checkHost(host string) error {
+// checkHost accepts a public DNS name, or an IP address guard allows: a
+// public one, or one in the host owner's allowed ranges. Names are checked
+// again after resolution, at dial time, so a public name that resolves into
+// an allowed range works; local names such as nas.lan never do.
+func checkHost(host string, guard netguard.Policy) error {
 	if host == "" || len(host) > 253 {
 		return fmt.Errorf("%w: host must be a DNS name or IP address", ErrInvalid)
 	}
 
 	if ip, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
-		if netguard.IsLocal(ip.Unmap()) {
-			return fmt.Errorf("%w: %s", ErrHostBlocked, ip)
+		if !guard.Allowed(ip) {
+			return fmt.Errorf("%w: %s; %s", ErrHostBlocked, ip, allowHint)
 		}
 
 		return nil
@@ -141,7 +145,7 @@ func checkHost(host string) error {
 	name := strings.TrimSuffix(host, ".")
 	for _, local := range []string{"localhost", "local", "internal", "home.arpa", "lan"} {
 		if name == local || strings.HasSuffix(name, "."+local) {
-			return fmt.Errorf("%w: %s", ErrHostBlocked, name)
+			return fmt.Errorf("%w: %s; local names are refused: use a public name, or the address with network.allowed_ranges in the agent's config", ErrHostBlocked, name)
 		}
 	}
 

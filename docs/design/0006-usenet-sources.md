@@ -56,7 +56,7 @@ authentication failure mid-download.
 | Field | Rule |
 |---|---|
 | `schema_version` | Must be `1`. |
-| `host` | DNS name or IP. Must not be local: private, loopback, link-local, CGNAT, `localhost`, `*.local`, `*.lan`, `*.internal`, `*.home.arpa` → `SOURCE_HOST_BLOCKED`. Checked again after DNS at every dial. |
+| `host` | DNS name or IP. Must not be local: private, loopback, link-local, CGNAT, an address with a zone (`fe80::1%eth0`), `localhost`, `*.local`, `*.lan`, `*.internal`, `*.home.arpa` → `SOURCE_HOST_BLOCKED`, with a message naming `network.allowed_ranges`. The exception is an address in the host owner's `network.allowed_ranges`; local names stay refused. Checked again after DNS at every dial, against the same ranges. |
 | `port` | 1–65535, default 563. |
 | `tls` | Must be `true`. |
 | `insecure_skip_verify` | Must be `false` or absent. Without certificate checks, TLS does not protect the password. |
@@ -209,4 +209,7 @@ A test that changes the state also sends a `SourceHealth` event.
 
 Anyone holding the public key can seal, the cloud included, so the agent
 treats sources as untrusted: public hosts and verified TLS only. A usenet
-server on the user's LAN must be configured locally (`NABBED_NNTP`).
+server on the user's LAN needs the host owner's consent on the agent
+itself: its address in `network.allowed_ranges` (`NABBED_ALLOWED_RANGES`),
+which the cloud cannot set, or the server configured locally
+(`NABBED_NNTP`).

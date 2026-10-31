@@ -61,10 +61,10 @@ func release(t *testing.T) string {
 
 func byName(f *File) string { return f.Name }
 
-func verify(t *testing.T, dir string, set *Set, quick bool, candidates ...string) *Report {
+func verify(t *testing.T, dir string, set *Set, candidates ...string) *Report {
 	t.Helper()
 
-	rep, err := Verify(context.Background(), os.DirFS(dir), set, candidates, VerifyOptions{Target: byName, Quick: quick})
+	rep, err := Verify(context.Background(), os.DirFS(dir), set, candidates, VerifyOptions{Target: byName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,11 +117,9 @@ func TestVerifyIntact(t *testing.T) {
 	dir := release(t)
 	set := parseFiles(t, "release.par2")
 
-	for _, quick := range []bool{false, true} {
-		rep := verify(t, dir, set, quick, "movie.mkv", "movie.nfo")
-		if !rep.Complete() || result(t, rep, "movie.mkv").Status != OK || result(t, rep, "movie.nfo").Status != OK {
-			t.Fatalf("quick=%v: got %+v, want both files OK", quick, rep.Files)
-		}
+	rep := verify(t, dir, set, "movie.mkv", "movie.nfo")
+	if !rep.Complete() || result(t, rep, "movie.mkv").Status != OK || result(t, rep, "movie.nfo").Status != OK {
+		t.Fatalf("got %+v, want both files OK", rep.Files)
 	}
 }
 
@@ -131,7 +129,7 @@ func TestVerifyFindsObfuscatedNames(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rep := verify(t, dir, parseFiles(t, "release.par2"), false, "a8f3k2b9.bin", "movie.nfo")
+	rep := verify(t, dir, parseFiles(t, "release.par2"), "a8f3k2b9.bin", "movie.nfo")
 
 	if r := result(t, rep, "movie.mkv"); r.Status != OK || r.Found != "a8f3k2b9.bin" {
 		t.Fatalf("got %+v, want movie.mkv found intact under its obfuscated name", r)
@@ -151,7 +149,7 @@ func TestVerifyCountsDamagedSlices(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rep := verify(t, dir, parseFiles(t, "release.par2"), false, "movie.mkv")
+	rep := verify(t, dir, parseFiles(t, "release.par2"), "movie.mkv")
 
 	if r := result(t, rep, "movie.mkv"); r.Status != Damaged || r.BadSlices != 1 {
 		t.Fatalf("got %+v, want 1 damaged slice", r)
@@ -172,7 +170,7 @@ func TestVerifyDetectsExtraTrailingBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rep := verify(t, dir, parseFiles(t, "release.par2"), false, "movie.mkv", "movie.nfo")
+	rep := verify(t, dir, parseFiles(t, "release.par2"), "movie.mkv", "movie.nfo")
 
 	if r := result(t, rep, "movie.nfo"); r.Status != Damaged {
 		t.Fatalf("got %+v, want a file with trailing junk reported damaged", r)

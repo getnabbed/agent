@@ -283,6 +283,8 @@ func (x *extractor) joinFile(name string, parts []string) error {
 		return diskError{err}
 	}
 
+	x.joined = append(x.joined, name)
+
 	return nil
 }
 

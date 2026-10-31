@@ -44,6 +44,9 @@ type Config struct {
 	// and must not be able to make the agent reach LAN devices, the router
 	// or cloud metadata endpoints.
 	AllowLAN bool
+	// AllowRanges are local ranges the host owner allows even without
+	// AllowLAN, from network.allowed_ranges.
+	AllowRanges []netip.Prefix
 	// MetadataTimeout bounds waiting for a magnet's metadata.
 	MetadataTimeout time.Duration
 	// StallTimeout fails a download that makes no progress for this long.
@@ -123,10 +126,10 @@ func (e *Engine) clientLocked() (*torrent.Client, error) {
 	// surface; keep it off.
 	cfg.DisableWebtorrent = true
 
-	policy := netguard.Policy{AllowLAN: e.cfg.AllowLAN}
+	policy := netguard.Policy{AllowLAN: e.cfg.AllowLAN, Allow: e.cfg.AllowRanges}
 	if !policy.AllowLAN {
 		// Peers in and out, and DHT nodes.
-		cfg.IPBlocklist = lanBlocklist{}
+		cfg.IPBlocklist = lanBlocklist{policy: policy}
 	}
 
 	// Trackers and web seeds are checked at connect time, after DNS.
@@ -338,16 +341,17 @@ func safeFiles(info *metainfo.Info) ([]engine.File, error) {
 	return out, nil
 }
 
-// lanBlocklist makes anacrolix refuse local-network peers and DHT nodes.
-type lanBlocklist struct{}
+// lanBlocklist makes anacrolix refuse local-network peers and DHT nodes
+// that the policy does not allow.
+type lanBlocklist struct{ policy netguard.Policy }
 
-func (lanBlocklist) Lookup(ip net.IP) (iplist.Range, bool) {
+func (b lanBlocklist) Lookup(ip net.IP) (iplist.Range, bool) {
 	a, ok := netip.AddrFromSlice(ip)
-	if !ok || !netguard.IsLocal(a) {
+	if !ok || b.policy.Allowed(a) {
 		return iplist.Range{}, false
 	}
 
-	return iplist.Range{First: ip, Last: ip, Description: "local network (torrent.allow_lan is off)"}, true
+	return iplist.Range{First: ip, Last: ip, Description: "local network (torrent.allow_lan is off and network.allowed_ranges does not include it)"}, true
 }
 
 func (lanBlocklist) NumRanges() int { return len(netguard.Ranges()) }
