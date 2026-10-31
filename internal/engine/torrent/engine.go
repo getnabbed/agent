@@ -53,9 +53,13 @@ type Config struct {
 	StallTimeout time.Duration
 	Log          *slog.Logger
 
-	// Test hooks.
-	noDHT     bool
-	peerAddrs []string
+	// Test hooks. loopbackOnly listens on loopback alone, so tests open no
+	// port to the network and Windows shows no firewall prompt. keepAlive
+	// sets anacrolix's KeepAliveTimeout, see seed in torrent_test.go.
+	noDHT        bool
+	peerAddrs    []string
+	loopbackOnly bool
+	keepAlive    time.Duration
 }
 
 // Engine is the native BitTorrent engine.
@@ -118,9 +122,17 @@ func (e *Engine) clientLocked() (*torrent.Client, error) {
 
 	cfg := torrent.NewDefaultClientConfig()
 	cfg.ListenPort = e.cfg.ListenPort
+	if e.cfg.loopbackOnly {
+		cfg.ListenHost = torrent.LoopbackListenHost
+	}
+
 	cfg.Seed = false
 	cfg.NoDefaultPortForwarding = !e.cfg.PortForwarding
 	cfg.NoDHT = e.cfg.noDHT
+	if e.cfg.keepAlive > 0 {
+		cfg.KeepAliveTimeout = e.cfg.keepAlive
+	}
+
 	cfg.Slogger = e.log
 	// WebTorrent (WebRTC) is not needed for BitTorrent and adds a large attack
 	// surface; keep it off.
