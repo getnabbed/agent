@@ -41,7 +41,7 @@ repository. They must be in place before the first tag:
     Agent 0.1.0 and charts 0.1.0 and 0.1.1 were published there, as
     `ghcr.io/wilderness-cloud/agent` and `ghcr.io/wilderness-cloud/charts`,
     and verify against `github.com/wilderness-cloud/agent` identities.
-    Agent 0.1.1 and chart 0.1.2 are the first under `getnabbed`.
+    Agent 0.2.0 and chart 0.1.2 are the first under `getnabbed`.
 - **A `release` environment with required reviewers**, limited to the
   `v*` tag pattern.
 - **A tag ruleset** restricting who may create or move `v*` tags.

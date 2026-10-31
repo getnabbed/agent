@@ -5,7 +5,7 @@ type: application
 version: 0.1.2
 # The agent release this chart version runs by default: image.tag
 # defaults to it. Each chart release pins an exact, signed agent.
-appVersion: "0.1.1"
+appVersion: "0.2.0"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/getnabbed/agent
 sources:
