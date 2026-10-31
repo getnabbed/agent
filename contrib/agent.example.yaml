@@ -35,6 +35,15 @@ torrent:
   # Off by default: a hostile torrent must not be able to probe your LAN.
   allow_lan: false
 
+# Local addresses that torrents and usenet sources from the web app may
+# reach anyway, such as a seedbox or a usenet server on your LAN: single
+# addresses or CIDR networks. The web app cannot change this list.
+# network:
+#   allowed_ranges:
+#     - 192.168.1.20
+#     - 192.168.10.0/24
+#     - fd00:1::/64
+
 # Folders the web app may import into. None by default, so imports are
 # refused until you allow the parents of your libraries. Symlinks are
 # resolved, so a link cannot lead outside.

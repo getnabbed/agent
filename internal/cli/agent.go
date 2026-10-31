@@ -22,6 +22,7 @@ import (
 	"github.com/getnabbed/agent/internal/library"
 	"github.com/getnabbed/agent/internal/link"
 	"github.com/getnabbed/agent/internal/lock"
+	"github.com/getnabbed/agent/internal/netguard"
 	"github.com/getnabbed/agent/internal/notice"
 	"github.com/getnabbed/agent/internal/source"
 	statestore "github.com/getnabbed/agent/internal/store"
@@ -202,6 +203,16 @@ func runRun(ctx context.Context, e *env, args []string) int {
 		return ExitUsage
 	}
 
+	// Config.Finish has checked them; parse once for the torrent and source
+	// guards.
+	allowRanges, err := netguard.ParseRanges(e.cfg.Network.AllowedRanges)
+	if err != nil {
+		e.log.Error("invalid network.allowed_ranges", "err", err)
+		return ExitError
+	}
+
+	rf.allowRanges = allowRanges
+
 	store, l, err := openLocked(e)
 	if err != nil {
 		e.log.Error("cannot open data dir", "err", err)
@@ -299,7 +310,11 @@ func runRun(ctx context.Context, e *env, args []string) int {
 		return ExitError
 	}
 
-	sources := source.New(source.Config{Store: state, Key: id.SealPrivate(), Engine: nntp, Log: e.log})
+	if len(rf.allowRanges) > 0 {
+		e.log.Warn("torrents and usenet sources from the web app may contact these local addresses (network.allowed_ranges)", "allowed_ranges", rf.allowRanges)
+	}
+
+	sources := source.New(source.Config{Store: state, Key: id.SealPrivate(), Engine: nntp, Log: e.log, AllowRanges: rf.allowRanges})
 	if err := sources.Load(ctx); err != nil {
 		e.log.Error("cannot load download sources", "err", err)
 		return ExitError

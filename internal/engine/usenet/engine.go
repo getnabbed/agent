@@ -25,6 +25,14 @@ const (
 	checkpointInterval = 5 * time.Second
 	progressInterval   = time.Second
 	janitorInterval    = 30 * time.Second
+
+	// maxTransfers bounds articles being fetched, decoded and written at
+	// once, across every download and whatever the sources' connection
+	// limits add up to (up to 32 sources of 100 connections are accepted).
+	// It is also the most workers one download starts. An article holds at
+	// most maxArticleBytes and maxPartBytes while in flight, and typically
+	// under 2 MiB.
+	maxTransfers = 128
 )
 
 // ErrNoProvider means no usenet provider is configured.
@@ -39,6 +47,9 @@ type Engine struct {
 	hook    atomic.Pointer[func(id string)]
 
 	notifier atomic.Pointer[Notifier]
+
+	// transfers holds a token for each article in flight; see maxTransfers.
+	transfers chan struct{}
 
 	mu        sync.Mutex
 	providers []*registered // priority order
@@ -58,11 +69,29 @@ func New(log *slog.Logger) *Engine {
 		log = slog.Default()
 	}
 
-	e := &Engine{timeout: 60 * time.Second, backoff: dialBackoff, log: log.With("engine", "usenet"), stop: make(chan struct{}), stopped: make(chan struct{})}
+	e := &Engine{
+		timeout:   60 * time.Second,
+		backoff:   dialBackoff,
+		log:       log.With("engine", "usenet"),
+		transfers: make(chan struct{}, maxTransfers),
+		stop:      make(chan struct{}),
+		stopped:   make(chan struct{}),
+	}
 
 	go e.janitor()
 
 	return e
+}
+
+// transferSlot waits for one of the maxTransfers slots and returns the func
+// that frees it.
+func (e *Engine) transferSlot(ctx context.Context) (func(), error) {
+	select {
+	case e.transfers <- struct{}{}:
+		return func() { <-e.transfers }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // SetHealthHook sets fn to be called with a provider's id whenever its
@@ -282,6 +311,8 @@ func (e *Engine) start(ctx context.Context, job engine.Job, ckptName string, wan
 	if workers == 0 {
 		return nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, false, "%v", ErrNoProvider)
 	}
+
+	workers = min(workers, maxTransfers)
 
 	root, err := os.OpenRoot(job.Dir)
 	if err != nil {
@@ -711,7 +742,7 @@ func (d *download) fetch(ctx context.Context, it workItem) error {
 		case errors.Is(err, ErrAuth) && !pl.p.Backup:
 			return engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, false, "usenet provider %s rejected the credentials", pl.p.Host)
 		case errors.Is(err, netguard.ErrBlocked) && !pl.p.Backup:
-			return engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, false, "usenet provider %s is on a local network address, which sources from the web app may not use", pl.p.Host)
+			return engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, false, "usenet provider %s is on a local network address, which sources from the web app may not use unless network.allowed_ranges in the agent's config allows it", pl.p.Host)
 		case errors.Is(err, ErrAuth), errors.Is(err, netguard.ErrBlocked), errors.Is(err, ErrProviderDown), errors.Is(err, errPoolClosed):
 			// Unusable provider: try the next. A down primary only fails the
 			// download once every primary is down.
@@ -769,6 +800,16 @@ func (d *download) fetchFrom(ctx context.Context, pl *pool, it workItem) error {
 			return err
 		}
 
+		// The transfer slot is taken with a connection in hand, never the
+		// other way round. Every slot holder then has a connection and is
+		// moving data, so the wait ends, and a busy or down provider cannot
+		// hold slots another download's provider could use.
+		var release func()
+		if release, err = d.e.transferSlot(ctx); err != nil {
+			pl.put(c, true)
+			return err
+		}
+
 		// Closing the socket unblocks a read stuck on a cancelled run.
 		stop := context.AfterFunc(ctx, func() { _ = c.nc.Close() })
 
@@ -778,6 +819,7 @@ func (d *download) fetchFrom(ctx context.Context, pl *pool, it workItem) error {
 			err = d.write(body, it)
 		}
 
+		release()
 		pl.put(c, stop() && !isConnErr(err))
 
 		var de *diskError

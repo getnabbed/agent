@@ -32,6 +32,10 @@ func (x *extractor) zip(name string) ([]string, error) {
 	}
 
 	for _, e := range r.File {
+		if err := x.count(); err != nil {
+			return nil, err
+		}
+
 		mode := e.Mode()
 
 		switch {

@@ -13,7 +13,7 @@ import (
 // to the agent's X25519 key and opened only in memory.
 
 // putSource upserts a source after checking it can be unsealed and that its
-// host is not on a local network.
+// host is not on a local network the host owner has not allowed.
 func (a *Applier) putSource(ctx context.Context, tx *store.Tx, c *pb.PutSource) (*pb.CommandResult, error) {
 	if a.sources == nil {
 		return notImplemented("put_source"), nil

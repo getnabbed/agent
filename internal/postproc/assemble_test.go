@@ -125,6 +125,28 @@ func damaged() []byte {
 	return d
 }
 
+// Every article arriving proves nothing about the data: a yEnc CRC is
+// optional, and an article can carry the right CRC for the wrong bytes. A
+// file that matches by size and first 16 KiB is still hashed in full.
+func TestDamagePastTheFirst16KiBIsRepairedWithNothingMissing(t *testing.T) {
+	vol, err := os.ReadFile(filepath.Join("..", "par2", "testdata", "release.vol0+2.par2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	j, res := job(t, map[string][]byte{"movie.mkv": damaged(), "movie.nfo": seq(300), "release.vol0+2.par2": vol})
+	res.MissingArticles = 0
+
+	if _, err := assemble(j, res); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(j.Dir, "data", "movie.mkv"))
+	if err != nil || !bytes.Equal(got, seq(40000)) {
+		t.Fatalf("got movie.mkv err=%v, want the damage repaired", err)
+	}
+}
+
 func TestRepairWithoutFetcherFailsRetryably(t *testing.T) {
 	j, res := job(t, map[string][]byte{"obf1": damaged(), "obf2": seq(300)})
 	res.MissingArticles = 1

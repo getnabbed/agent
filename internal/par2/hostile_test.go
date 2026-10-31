@@ -148,7 +148,7 @@ func TestReportOutOfRangeSlicesAreIgnored(t *testing.T) {
 	set := fx.load(t, dir)
 	damage(t, dir, "movie.mkv", set.SliceSize, 1)
 
-	rep := verify(t, dir, set, false, fx.names()...)
+	rep := verify(t, dir, set, fx.names()...)
 	for i := range rep.Files {
 		rep.Files[i].Bad = append(rep.Files[i].Bad, -1, 1<<30)
 	}

@@ -3,6 +3,7 @@ package postproc
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/getnabbed/agent/internal/engine"
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
@@ -439,12 +441,73 @@ func TestDecompressionBombFailsForGood(t *testing.T) {
 	}
 }
 
+// A failed job stays on disk for a retry, which extracts again; what the
+// failed run wrote is removed so a hostile release cannot leave its output
+// budget behind each time.
+func TestFailedExtractionLeavesNoOutput(t *testing.T) {
+	piece := bytes.Repeat([]byte("p"), 1000)
+	j, res := workDir(t, map[string][]byte{
+		"movie.mkv.001": piece, "movie.mkv.002": piece,
+		"rel.zip": zipOf(t, zipEntry{name: "a.srt", data: make([]byte, 4096)}, zipEntry{name: "zeros", data: make([]byte, 8<<20)}),
+	})
+
+	_, err := (&Assembler{Log: quiet, Slack: 1 << 20}).Assemble(t.Context(), j, res)
+	wantExtractFailure(t, err, "exceeds the limit")
+
+	if exists(j, "extracted") || exists(j, "data/movie.mkv") {
+		t.Fatal("got output of the failed extraction left on disk")
+	}
+
+	if !exists(j, "data/movie.mkv.001") || !exists(j, "data/rel.zip") {
+		t.Fatal("got the download itself removed, want it kept for a retry")
+	}
+}
+
 func TestTooManyEntriesFailsForGood(t *testing.T) {
 	j, res := workDir(t, map[string][]byte{"rel.zip": zipOf(t,
 		zipEntry{name: "1", data: nil}, zipEntry{name: "2", data: nil}, zipEntry{name: "3", data: nil})})
 
 	_, err := (&Assembler{Log: quiet, MaxEntries: 2}).Assemble(t.Context(), j, res)
 	wantExtractFailure(t, err, "too many entries")
+}
+
+// Links and other entries that are skipped still count, so a RAR cannot
+// list them without limit.
+func TestRAREntriesThatAreSkippedStillCount(t *testing.T) {
+	vols := rar5(1,
+		rarEntry{name: "l1", symlink: "/etc/passwd"},
+		rarEntry{name: "l2", symlink: "/etc/passwd"},
+		rarEntry{name: "l3", symlink: "/etc/passwd"},
+	)
+	j, res := workDir(t, map[string][]byte{"rel.rar": vols[0]})
+
+	_, err := (&Assembler{Log: quiet, MaxEntries: 2}).Assemble(t.Context(), j, res)
+	wantExtractFailure(t, err, "too many entries")
+}
+
+func TestExtractionsAreBoundedAcrossJobs(t *testing.T) {
+	a := &Assembler{Extractions: 1}
+
+	release, err := a.extractSlot(t.Context(), quiet)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+
+	if _, err := a.extractSlot(ctx, quiet); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("got %v while the only slot is taken, want to wait until the context ends", err)
+	}
+
+	release()
+
+	again, err := a.extractSlot(t.Context(), quiet)
+	if err != nil {
+		t.Fatalf("got %v once the slot was freed", err)
+	}
+
+	again()
 }
 
 func TestMislabelledArchiveIsLeftAlone(t *testing.T) {
@@ -472,7 +535,26 @@ func TestDecoderMemoryIsCapped(t *testing.T) {
 		t.Fatalf("got %v for 3.75 GiB of PPMd memory", err)
 	}
 
-	if _, err := newLZMA2([]byte{24}, 0, in); err != nil {
+	// Above every 7-Zip and WinRAR preset, but under the old 1 GiB cap.
+	if _, err := newLZMA2([]byte{34}, 0, in); !errors.Is(err, errDictTooLarge) {
+		t.Fatalf("got %v for a 512 MiB LZMA2 dictionary", err)
+	}
+
+	if _, err := newPPMd([]byte{6, 0, 0, 0, 0x20}, 0, in); !errors.Is(err, errDictTooLarge) {
+		t.Fatalf("got %v for 512 MiB of PPMd memory", err)
+	}
+
+	if _, err := newPPMd([]byte{6, 1, 0, 0, 0x10}, 0, in); !errors.Is(err, errDictTooLarge) {
+		t.Fatalf("got %v for one byte over the cap of PPMd memory", err)
+	}
+
+	// 7-Zip's ultra preset: LZMA2 with 64 MiB, or PPMd with 192 MiB, which
+	// the reader would allocate here, so only the cap is checked.
+	if _, err := newLZMA2([]byte{28}, 0, in); err != nil {
 		t.Fatalf("got %v for a 64 MiB LZMA2 dictionary, want it allowed", err)
+	}
+
+	if maxDictBytes < 192<<20 {
+		t.Fatalf("got a cap of %d MiB, want room for 7-Zip's 192 MiB PPMd preset", maxDictBytes>>20)
 	}
 }

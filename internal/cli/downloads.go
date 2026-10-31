@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"net/url"
 
 	"github.com/getnabbed/agent/internal/auth"
@@ -22,6 +23,10 @@ type runFlags struct {
 	torrentPort  int
 	allowLAN     bool
 	nntp         string
+
+	// allowRanges is network.allowed_ranges, parsed by runRun. It has no
+	// flag.
+	allowRanges []netip.Prefix
 }
 
 func (f *runFlags) register(fs *flag.FlagSet, cfg *config.Config) {
@@ -57,7 +62,7 @@ func newDownloads(e *env, f runFlags, state *statestore.Store, api *url.URL, hc 
 		e.log.Warn("using a usenet provider from configuration; this is temporary until sources are sealed to the agent", "provider", p.String())
 	}
 
-	bt := torrent.New(torrent.Config{ListenPort: f.torrentPort, AllowLAN: f.allowLAN, Log: e.log})
+	bt := torrent.New(torrent.Config{ListenPort: f.torrentPort, AllowLAN: f.allowLAN, AllowRanges: f.allowRanges, Log: e.log})
 	if f.allowLAN {
 		e.log.Warn("torrents may contact devices on the local network (torrent.allow_lan is on)")
 	}

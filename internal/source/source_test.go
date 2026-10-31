@@ -10,11 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/getnabbed/agent/internal/engine/usenet"
+	"github.com/getnabbed/agent/internal/netguard"
 	"github.com/getnabbed/agent/internal/store"
 	pb "github.com/getnabbed/agent/pkg/proto/nabbed/agent/v2"
 )
@@ -115,6 +118,8 @@ type fixture struct {
 	engine *fakeEngine
 	m      *Manager
 	dir    string
+	// allow is the owner's network.allowed_ranges.
+	allow []netip.Prefix
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -148,7 +153,7 @@ func (f *fixture) reopen(t *testing.T) {
 
 	f.store = st
 	f.engine = &fakeEngine{providers: map[string]usenet.Provider{}}
-	f.m = New(Config{Store: st, Key: f.key, Engine: f.engine, Log: quiet})
+	f.m = New(Config{Store: st, Key: f.key, Engine: f.engine, Log: quiet, AllowRanges: f.allow})
 
 	if err := f.m.Load(context.Background()); err != nil {
 		t.Fatal(err)
@@ -381,6 +386,7 @@ func TestRejections(t *testing.T) {
 		{"metadata", func() *pb.Source { return f.source(t, "a", with("host", "169.254.169.254")) }, ErrHostBlocked},
 		{"localhost", func() *pb.Source { return f.source(t, "a", with("host", "LocalHost")) }, ErrHostBlocked},
 		{"mdns", func() *pb.Source { return f.source(t, "a", with("host", "nas.local")) }, ErrHostBlocked},
+		{"zoned loopback", func() *pb.Source { return f.source(t, "a", with("host", "[::1%lo]")) }, ErrHostBlocked},
 	}
 
 	for _, c := range cases {
@@ -396,6 +402,73 @@ func TestRejections(t *testing.T) {
 
 	if len(f.engine.providers) != 0 {
 		t.Fatalf("got %d providers configured from rejected sources, want 0", len(f.engine.providers))
+	}
+}
+
+// The host owner can let web-app sources reach chosen local addresses; the
+// cloud cannot.
+func TestOwnerAllowedRangesLetSourcesIn(t *testing.T) {
+	f := newFixture(t)
+	f.allow = []netip.Prefix{netip.MustParsePrefix("192.168.1.0/24")}
+	f.reopen(t)
+
+	for _, c := range []struct {
+		id, host string
+		want     error
+	}{
+		{"allowed", "192.168.1.10", nil},
+		{"outside", "192.168.2.10", ErrHostBlocked},
+		{"local-name", "nas.lan", ErrHostBlocked}, // checked by name; use the address
+	} {
+		cfg := validConfig()
+		cfg["host"] = c.host
+
+		err := f.put(f.source(t, c.id, cfg))
+		if !errors.Is(err, c.want) {
+			t.Fatalf("%s: got %v, want %v", c.host, err, c.want)
+		}
+
+		if c.want != nil && !strings.Contains(err.Error(), "network.allowed_ranges") {
+			t.Fatalf("%s: got %v, want a hint naming network.allowed_ranges", c.host, err)
+		}
+	}
+}
+
+// A public name can resolve to a local address, so every dial is checked
+// against the same ranges.
+func TestSourceDialsHonourAllowedRanges(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() { _ = ln.Close() }()
+
+	allowed := newFixture(t)
+	allowed.allow = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
+	allowed.reopen(t)
+
+	for _, c := range []struct {
+		name string
+		f    *fixture
+		want error
+	}{
+		{"allowed", allowed, nil},
+		{"not allowed", newFixture(t), netguard.ErrBlocked},
+	} {
+		if err := c.f.put(c.f.source(t, "src-1", validConfig())); err != nil {
+			t.Fatal(err)
+		}
+
+		// As if news.newshosting.com resolved to the listener.
+		conn, err := c.f.engine.providers["src-1"].Dial(t.Context(), "tcp", ln.Addr().String())
+		if conn != nil {
+			_ = conn.Close()
+		}
+
+		if !errors.Is(err, c.want) {
+			t.Fatalf("%s: got %v, want %v", c.name, err, c.want)
+		}
 	}
 }
 
@@ -418,7 +491,7 @@ func TestSourceLimit(t *testing.T) {
 }
 
 func TestDefaults(t *testing.T) {
-	p, err := parseUsenet([]byte(`{"schema_version":1,"host":"News.Example.COM.","tls":true,"base_path":"/ignored"}`))
+	p, err := parseUsenet([]byte(`{"schema_version":1,"host":"News.Example.COM.","tls":true,"base_path":"/ignored"}`), netguard.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +515,7 @@ func TestAcceptsWebFormPayloads(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		p, err := parseUsenet([]byte(c.json))
+		p, err := parseUsenet([]byte(c.json), netguard.Policy{})
 		if err != nil {
 			t.Fatalf("got %v for %s", err, c.json)
 		}

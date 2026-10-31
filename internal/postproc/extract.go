@@ -28,14 +28,16 @@ const (
 	// during clean-up does not look for archives it already deleted.
 	markerFile = "extract.json"
 	// maxDictBytes caps the decoder memory one archive may ask for. RAR5
-	// defaults to 32 MiB and 7-Zip's ultra preset to 64 MiB; the formats
-	// allow 4 GiB and more, which would let one release exhaust memory.
-	maxDictBytes = 1 << 30
+	// defaults to 32 MiB, 7-Zip's ultra preset to 64 MiB for LZMA2 and
+	// 192 MiB for PPMd; the formats allow 4 GiB and more, which would let one
+	// release exhaust memory. Most releases are stored and need none.
+	maxDictBytes = 256 << 20
 	// maxDepth bounds directory nesting inside an archive.
 	maxDepth = 32
 
-	defaultMaxEntries = 10000
-	defaultSlack      = 1 << 30
+	defaultMaxEntries  = 10000
+	defaultSlack       = 1 << 30
+	defaultExtractions = 2
 )
 
 var (
@@ -167,7 +169,26 @@ type extractor struct {
 	entries int
 	used    map[string]bool
 	written []string
+	// joined lists the files joinSplits created in this run.
+	joined  []string
 	skipped int
+}
+
+// discard removes what this run wrote, after a failure: everything under
+// extractDir and the files joined from splits. A failed job is kept on
+// disk for RetryDownload, which extracts again from the download, so its
+// partial output would only hold space; a hostile release could otherwise
+// leave up to its whole output budget behind each time.
+func (x *extractor) discard() {
+	if err := x.root.RemoveAll(extractDir); err != nil {
+		x.log.Warn("remove output of failed extraction", "err", err)
+	}
+
+	for _, f := range x.joined {
+		if err := x.root.Remove(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			x.log.Warn("remove joined file of failed extraction", "file", f, "err", err)
+		}
+	}
 }
 
 // entryPath maps an archive entry name to a path under extractDir. Every
@@ -194,6 +215,8 @@ func entryPath(name string) (string, bool) {
 	return path.Join(parts...), true
 }
 
+// count spends one entry of the job's limit. Every entry an archive lists
+// counts, including links and other entries that are skipped.
 func (x *extractor) count() error {
 	x.entries--
 	if x.entries < 0 {
@@ -211,10 +234,6 @@ func (x *extractor) skip(name, why string) {
 }
 
 func (x *extractor) mkdir(name string) error {
-	if err := x.count(); err != nil {
-		return err
-	}
-
 	p, ok := entryPath(name)
 	if !ok {
 		x.skip(name, "unsafe path")
@@ -231,10 +250,6 @@ func (x *extractor) mkdir(name string) error {
 // create writes one regular file from r. A name used twice, or two names
 // that differ only in case, get a numbered suffix.
 func (x *extractor) create(name string, r io.Reader) error {
-	if err := x.count(); err != nil {
-		return err
-	}
-
 	p, ok := entryPath(name)
 	if !ok {
 		x.skip(name, "unsafe path")
@@ -362,6 +377,13 @@ func (a *Assembler) unpack(ctx context.Context, root *os.Root, job engine.Job, f
 		used:    map[string]bool{},
 	}
 
+	done := false
+	defer func() {
+		if !done {
+			x.discard()
+		}
+	}()
+
 	data, pieces, err := x.joinSplits(data)
 	if err != nil {
 		return nil, classifyJoin(ctx, err)
@@ -377,7 +399,7 @@ func (a *Assembler) unpack(ctx context.Context, root *os.Root, job engine.Job, f
 	remove := slices.Concat(par2Files, pieces)
 
 	for _, arc := range archives {
-		volumes, err := x.extract(arc)
+		volumes, err := a.extractOne(ctx, x, arc, log)
 		if err != nil {
 			return nil, classify(ctx, arc, err)
 		}
@@ -404,6 +426,8 @@ func (a *Assembler) unpack(ctx context.Context, root *os.Root, job engine.Job, f
 		}
 	}
 
+	done = true
+
 	if x.skipped > 0 {
 		log.Warn("archives had entries that were not extracted", "entries", x.skipped)
 		job.Notes.Warn("extract.entries_skipped", fmt.Sprintf("%d archive entries were not extracted (unsafe names or links)", x.skipped),
@@ -411,6 +435,39 @@ func (a *Assembler) unpack(ctx context.Context, root *os.Root, job engine.Job, f
 	}
 
 	return finish(root, m, log), nil
+}
+
+// extractOne extracts arc while holding an extraction slot.
+func (a *Assembler) extractOne(ctx context.Context, x *extractor, arc archive, log *slog.Logger) ([]string, error) {
+	release, err := a.extractSlot(ctx, log)
+	if err != nil {
+		return nil, err
+	}
+
+	defer release()
+
+	return x.extract(arc)
+}
+
+// extractSlot waits until fewer than Extractions archives are being
+// extracted, across every job, and returns the func that frees the slot.
+func (a *Assembler) extractSlot(ctx context.Context, log *slog.Logger) (func(), error) {
+	a.slotsOnce.Do(func() { a.slots = make(chan struct{}, a.extractions()) })
+
+	select {
+	case a.slots <- struct{}{}:
+		return func() { <-a.slots }, nil
+	default:
+	}
+
+	log.Info("waiting for other downloads to finish extracting")
+
+	select {
+	case a.slots <- struct{}{}:
+		return func() { <-a.slots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (x *extractor) extract(arc archive) ([]string, error) {
@@ -504,4 +561,12 @@ func (a *Assembler) slack() int64 {
 	}
 
 	return defaultSlack
+}
+
+func (a *Assembler) extractions() int {
+	if a.Extractions > 0 {
+		return a.Extractions
+	}
+
+	return defaultExtractions
 }

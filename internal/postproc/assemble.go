@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/getnabbed/agent/internal/engine"
 	"github.com/getnabbed/agent/internal/engine/usenet"
@@ -44,6 +45,13 @@ type Assembler struct {
 	// 0 means 1 GiB. Releases are mostly stored uncompressed, so more than
 	// that is a decompression bomb.
 	Slack int64
+	// Extractions bounds archives extracted at once, across every job this
+	// Assembler handles, so decoder memory stays within Extractions times
+	// the per-archive cap however many downloads finish together; 0 means 2.
+	Extractions int
+
+	slotsOnce sync.Once
+	slots     chan struct{}
 
 	// repairProgress, if set, is called after each repair pass (tests).
 	repairProgress func(done, total int)
@@ -127,12 +135,11 @@ func (a *Assembler) Assemble(ctx context.Context, job engine.Job, res *engine.Re
 		targets[f] = path.Join(dir, uniqueTarget(usenet.SafeName(f.Name, i), used))
 	}
 
+	// Every protected file is hashed in full, even with no articles missing.
+	// A yEnc CRC is optional, and only proves an article arrived as its
+	// poster encoded it, not that it holds the data the PAR2 set describes.
 	rep, err := par2.Verify(ctx, root.FS(), set, data, par2.VerifyOptions{
 		Target: func(f *par2.File) string { return targets[f] },
-		// The native engines check every byte in transit (yEnc CRC per usenet
-		// article, SHA-1 per torrent piece). With nothing missing the data is
-		// what was posted, so a size and 16 KiB match suffices.
-		Quick: res.MissingArticles == 0,
 	})
 	if err != nil {
 		if ctx.Err() != nil {

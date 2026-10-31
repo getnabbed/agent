@@ -172,3 +172,60 @@ func (s *fakeNNTP) setPass(pass string) {
 
 	s.pass = pass
 }
+
+// stallServer accepts connections and never greets, like a provider that
+// hangs. close drops every connection it accepted.
+type stallServer struct {
+	ln       net.Listener
+	accepted chan struct{}
+
+	mu    sync.Mutex
+	conns []net.Conn
+}
+
+func newStallServer(t *testing.T) *stallServer {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := &stallServer{ln: ln, accepted: make(chan struct{}, 1)}
+	t.Cleanup(s.close)
+
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+
+			s.mu.Lock()
+			s.conns = append(s.conns, c)
+			s.mu.Unlock()
+
+			select {
+			case s.accepted <- struct{}{}:
+			default:
+			}
+		}
+	}()
+
+	return s
+}
+
+func (s *stallServer) provider(conns int) Provider {
+	return Provider{Host: "127.0.0.1", Port: s.ln.Addr().(*net.TCPAddr).Port, Connections: conns}
+}
+
+func (s *stallServer) close() {
+	_ = s.ln.Close()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, c := range s.conns {
+		_ = c.Close()
+	}
+}

@@ -76,6 +76,7 @@ redacted.
 | `downloads.max_concurrent` | `NABBED_MAX_DOWNLOADS` | `--max-downloads` | `3` |
 | `torrent.port` | `NABBED_TORRENT_PORT` | `--torrent-port` | `0` (random); `6881` in Docker |
 | `torrent.allow_lan` | `NABBED_TORRENT_ALLOW_LAN` | `--torrent-allow-lan` | `false` |
+| `network.allowed_ranges` | `NABBED_ALLOWED_RANGES` | | none: torrents and web-app sources stay off the local network (see below) |
 | `usenet.provider` | `NABBED_NNTP` | `--nntp` | none (temporary, see below) |
 | `library.allowed_roots` | `NABBED_LIBRARY_ROOTS` | | none: no library folders allowed (see below) |
 | `library.file_mode` | `NABBED_LIBRARY_FILE_MODE` | | `0644` |
@@ -131,11 +132,13 @@ that the cloud cannot override.
 Add usenet providers in the web app. The browser encrypts the credentials
 to this agent's key, so the cloud stores them but cannot read them, and the
 agent keeps them encrypted on disk. Providers from the web app must use TLS
-and a public host. Pairing the agent again gives it a new key, so its
-providers must be entered again.
+and a public host, unless you allow the host's address in
+`network.allowed_ranges` (see [Local network policy](#local-network-policy)).
+Pairing the agent again gives it a new key, so its providers must be
+entered again.
 
 A provider on your local network, or one you prefer to keep off the cloud
-entirely, can be set locally with `NABBED_NNTP_FILE` (preferred) or
+entirely, can also be set locally with `NABBED_NNTP_FILE` (preferred) or
 `NABBED_NNTP`:
 `nntps://user:password@news.example.com:563?connections=8`. Flag values are
 visible in process lists, so avoid `--nntp` for real passwords.
@@ -216,15 +219,40 @@ Downloads go to the download directory, at most `downloads.max_concurrent`
 at once. BitTorrent listens on `torrent.port` and does not seed after
 completion; forwarding that port improves speeds but is optional.
 
-### Torrent network policy
+### Local network policy
 
 Torrent metadata comes from public indexers and peers, so it is untrusted.
 By default the agent will not contact anything on your local network on a
 torrent's behalf: peers, DHT nodes, trackers and web seeds with private,
-loopback, link-local (including cloud metadata), CGNAT or multicast
-addresses are refused, checked after DNS so a hostname cannot sneak one
-through. Set `torrent.allow_lan: true` only if you deliberately seed or
-fetch from machines on your LAN.
+loopback, link-local (including cloud metadata), CGNAT, local-use NAT64 or
+multicast addresses are refused, checked after DNS so a hostname cannot
+sneak one through. Usenet sources from the web app are held to the same
+rule, since anyone with the agent's public key can seal one.
+
+To let both reach particular machines, such as a seedbox, a tracker or a
+usenet server on your LAN, list their addresses or networks:
+
+```yaml
+network:
+  allowed_ranges:
+    - 192.168.1.20      # one address
+    - 192.168.10.0/24   # a network
+    - fd00:1::/64
+```
+
+or `NABBED_ALLOWED_RANGES="192.168.1.20, 192.168.10.0/24"` (commas or
+spaces). Only this file or the environment can set it; the web app cannot.
+An IPv4 range also covers the same addresses written as IPv6
+(`::ffff:192.168.1.20`, or `64:ff9b::c0a8:114` through NAT64). On an
+IPv6-only network that reaches IPv4 through a local-use NAT64 prefix,
+allow that prefix, for example `64:ff9b:1::/48`. A range with bits set past
+its length, such as `192.168.1.20/24`, is refused, since it is unclear
+whether one address or the network was meant. Web-app sources must still
+use a public name (one that resolves into an allowed range works) or the
+address itself: names such as `nas.lan` or `nas.local` are always refused.
+
+Set `torrent.allow_lan: true` only if you deliberately seed or fetch from
+any machine on your LAN; it applies to torrents only.
 
 Import into the library is not implemented yet: completed downloads stay in
 the download directory and are reported as failed at the import step.

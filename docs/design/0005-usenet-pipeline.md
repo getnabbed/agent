@@ -48,9 +48,13 @@ out the fastest usenet libraries. Each stage was checked in October 2026.
    post readable NZB names for sets whose PAR2 was made from obfuscated
    files. After extraction, if the largest file's name still looks
    obfuscated, it and files sharing its stem take the release title
-   (sanitised) with their own extensions. With no missing articles, that match is enough:
-   every byte already passed a yEnc CRC or torrent piece hash. Otherwise
-   each file is hashed per slice to find the slices repair must rebuild.
+   (sanitised) with their own extensions. That match only finds a file:
+   every file is then hashed per slice and in full, even with no articles
+   missing, to find the slices repair must rebuild. A yEnc CRC is optional
+   and only shows an article arrived as its poster encoded it, so a CRC or
+   piece hash in transit is not taken as proof of the PAR2 set's data. A
+   CRC that is present but unreadable counts as a mismatch, as in other
+   decoders, and the article is tried on the next provider.
    An obfuscated file whose first 16 KiB is damaged is found by its exact
    size and any slice that still matches. A file with the right content
    and the wrong length only needs truncating. All files verifying moves
@@ -127,16 +131,24 @@ out the fastest usenet libraries. Each stage was checked in October 2026.
      Links and other non-regular entries are never created.
    - **Limits against bombs.**
      - Output may not exceed twice the downloaded size plus 1 GiB.
-     - At most 10,000 entries per job.
-     - Decoders may use at most 1 GiB of dictionary or model memory. RAR
+     - At most 10,000 entries per job. Every entry an archive lists counts,
+       links and other skipped entries included.
+     - Decoders may use at most 256 MiB of dictionary or model memory,
+       above every 7-Zip and WinRAR preset (PPMd ultra is 192 MiB). RAR
        passes this to rardecode. For 7z the agent replaces the library's
        LZMA, LZMA2 and PPMd decoders with ones that check first, because the
        library allocates whatever the archive declares, up to 4 GiB. Zstd,
        Brotli and LZ4, which only third-party 7-Zip builds write, are
        refused.
+     - At most two archives are extracted at once across all downloads, so
+       decoder memory stays under 512 MiB however many finish together.
+       Others wait, and say so in the log.
    - **Failures.** Password protection, missing volumes, bad checksums and
      exceeded limits fail `EXTRACT` and are not retryable, so the cloud
      picks another release. Write errors fail `DISK` and are retryable.
+     Either way, what the failed run wrote is removed: everything under
+     `extracted/` and the files joined from splits. The download itself
+     stays for `RetryDownload`, which extracts again.
 5. **Clean up (done).** After a successful extraction, the archive volumes
    and PAR2 files are deleted. The result handed to import lists the
    extracted files plus any downloaded files that were neither archives
@@ -157,6 +169,12 @@ much damage PAR2 can repair, and that comes from parsing the index file.
 - **One pool per provider, shared by all downloads.** `connections=N` is
   the account limit, not a per-download count. Before this change, three
   downloads with eight connections each opened 24.
+- **At most 128 articles in flight** across every download, however many
+  connections the sources allow between them (up to 32 sources of 100).
+  An article in flight holds its raw body and decoded data, typically
+  under 2 MiB together. A download starts at most 128 workers. A worker
+  takes a transfer slot only once it holds a connection, so a busy or down
+  provider never holds slots that another provider's downloads could use.
 - **Route.** Each article is tried on the job's own source, then the other
   primary providers, then backups, in configuration order. A provider is
   skipped for an article when it answers 430 (not found) or serves a copy
