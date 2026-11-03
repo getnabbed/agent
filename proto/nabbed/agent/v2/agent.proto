@@ -560,8 +560,11 @@ message EventAck {
 
 message Telemetry {
   oneof kind {
+    // One download. Older agents send this; newer agents send
+    // download_progress_batch instead.
     DownloadProgress download_progress = 10;
     HostStats host_stats = 11;
+    DownloadProgressBatch download_progress_batch = 12;
   }
 }
 
@@ -571,6 +574,13 @@ message DownloadProgress {
   uint64 bytes = 3;
   uint64 speed_bps = 4;
   uint64 eta_s = 5;
+}
+
+// DownloadProgressBatch is every transferring download in one message, sent
+// a few times a second. A download that just stopped appears once more with
+// its final value, then drops out.
+message DownloadProgressBatch {
+  repeated DownloadProgress downloads = 1;
 }
 
 // RootDiskFree is the free space where a library root lives, or, with

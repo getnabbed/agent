@@ -4429,6 +4429,7 @@ type Telemetry struct {
 	//
 	//	*Telemetry_DownloadProgress
 	//	*Telemetry_HostStats
+	//	*Telemetry_DownloadProgressBatch
 	Kind          isTelemetry_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4489,11 +4490,22 @@ func (x *Telemetry) GetHostStats() *HostStats {
 	return nil
 }
 
+func (x *Telemetry) GetDownloadProgressBatch() *DownloadProgressBatch {
+	if x != nil {
+		if x, ok := x.Kind.(*Telemetry_DownloadProgressBatch); ok {
+			return x.DownloadProgressBatch
+		}
+	}
+	return nil
+}
+
 type isTelemetry_Kind interface {
 	isTelemetry_Kind()
 }
 
 type Telemetry_DownloadProgress struct {
+	// One download. Older agents send this; newer agents send
+	// download_progress_batch instead.
 	DownloadProgress *DownloadProgress `protobuf:"bytes,10,opt,name=download_progress,json=downloadProgress,proto3,oneof"`
 }
 
@@ -4501,9 +4513,15 @@ type Telemetry_HostStats struct {
 	HostStats *HostStats `protobuf:"bytes,11,opt,name=host_stats,json=hostStats,proto3,oneof"`
 }
 
+type Telemetry_DownloadProgressBatch struct {
+	DownloadProgressBatch *DownloadProgressBatch `protobuf:"bytes,12,opt,name=download_progress_batch,json=downloadProgressBatch,proto3,oneof"`
+}
+
 func (*Telemetry_DownloadProgress) isTelemetry_Kind() {}
 
 func (*Telemetry_HostStats) isTelemetry_Kind() {}
+
+func (*Telemetry_DownloadProgressBatch) isTelemetry_Kind() {}
 
 type DownloadProgress struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -4581,6 +4599,53 @@ func (x *DownloadProgress) GetEtaS() uint64 {
 	return 0
 }
 
+// DownloadProgressBatch is every transferring download in one message, sent
+// a few times a second. A download that just stopped appears once more with
+// its final value, then drops out.
+type DownloadProgressBatch struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Downloads     []*DownloadProgress    `protobuf:"bytes,1,rep,name=downloads,proto3" json:"downloads,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DownloadProgressBatch) Reset() {
+	*x = DownloadProgressBatch{}
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DownloadProgressBatch) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DownloadProgressBatch) ProtoMessage() {}
+
+func (x *DownloadProgressBatch) ProtoReflect() protoreflect.Message {
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DownloadProgressBatch.ProtoReflect.Descriptor instead.
+func (*DownloadProgressBatch) Descriptor() ([]byte, []int) {
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *DownloadProgressBatch) GetDownloads() []*DownloadProgress {
+	if x != nil {
+		return x.Downloads
+	}
+	return nil
+}
+
 // RootDiskFree is the free space where a library root lives, or, with
 // downloads set and no root_id, where the agent keeps downloads.
 type RootDiskFree struct {
@@ -4595,7 +4660,7 @@ type RootDiskFree struct {
 
 func (x *RootDiskFree) Reset() {
 	*x = RootDiskFree{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[53]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4607,7 +4672,7 @@ func (x *RootDiskFree) String() string {
 func (*RootDiskFree) ProtoMessage() {}
 
 func (x *RootDiskFree) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[53]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4620,7 +4685,7 @@ func (x *RootDiskFree) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RootDiskFree.ProtoReflect.Descriptor instead.
 func (*RootDiskFree) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{53}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *RootDiskFree) GetRootId() string {
@@ -4663,7 +4728,7 @@ type HostStats struct {
 
 func (x *HostStats) Reset() {
 	*x = HostStats{}
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[54]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4675,7 +4740,7 @@ func (x *HostStats) String() string {
 func (*HostStats) ProtoMessage() {}
 
 func (x *HostStats) ProtoReflect() protoreflect.Message {
-	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[54]
+	mi := &file_nabbed_agent_v2_agent_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4688,7 +4753,7 @@ func (x *HostStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HostStats.ProtoReflect.Descriptor instead.
 func (*HostStats) Descriptor() ([]byte, []int) {
-	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{54}
+	return file_nabbed_agent_v2_agent_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *HostStats) GetDiskFree() []*RootDiskFree {
@@ -5019,12 +5084,13 @@ const file_nabbed_agent_v2_agent_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1c\n" +
 	"\bEventAck\x12\x10\n" +
-	"\x03ids\x18\x01 \x03(\tR\x03ids\"\xa2\x01\n" +
+	"\x03ids\x18\x01 \x03(\tR\x03ids\"\x84\x02\n" +
 	"\tTelemetry\x12P\n" +
 	"\x11download_progress\x18\n" +
 	" \x01(\v2!.nabbed.agent.v2.DownloadProgressH\x00R\x10downloadProgress\x12;\n" +
 	"\n" +
-	"host_stats\x18\v \x01(\v2\x1a.nabbed.agent.v2.HostStatsH\x00R\thostStatsB\x06\n" +
+	"host_stats\x18\v \x01(\v2\x1a.nabbed.agent.v2.HostStatsH\x00R\thostStats\x12`\n" +
+	"\x17download_progress_batch\x18\f \x01(\v2&.nabbed.agent.v2.DownloadProgressBatchH\x00R\x15downloadProgressBatchB\x06\n" +
 	"\x04kind\"\x95\x01\n" +
 	"\x10DownloadProgress\x12\x1f\n" +
 	"\vdownload_id\x18\x01 \x01(\tR\n" +
@@ -5032,7 +5098,9 @@ const file_nabbed_agent_v2_agent_proto_rawDesc = "" +
 	"\apercent\x18\x02 \x01(\x02R\apercent\x12\x14\n" +
 	"\x05bytes\x18\x03 \x01(\x04R\x05bytes\x12\x1b\n" +
 	"\tspeed_bps\x18\x04 \x01(\x04R\bspeedBps\x12\x13\n" +
-	"\x05eta_s\x18\x05 \x01(\x04R\x04etaS\"\x85\x01\n" +
+	"\x05eta_s\x18\x05 \x01(\x04R\x04etaS\"X\n" +
+	"\x15DownloadProgressBatch\x12?\n" +
+	"\tdownloads\x18\x01 \x03(\v2!.nabbed.agent.v2.DownloadProgressR\tdownloads\"\x85\x01\n" +
 	"\fRootDiskFree\x12\x17\n" +
 	"\aroot_id\x18\x01 \x01(\tR\x06rootId\x12\x1d\n" +
 	"\n" +
@@ -5140,79 +5208,80 @@ func file_nabbed_agent_v2_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_nabbed_agent_v2_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
-var file_nabbed_agent_v2_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 58)
+var file_nabbed_agent_v2_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 59)
 var file_nabbed_agent_v2_agent_proto_goTypes = []any{
-	(GoAwayReason)(0),          // 0: nabbed.agent.v2.GoAwayReason
-	(CommandOutcome)(0),        // 1: nabbed.agent.v2.CommandOutcome
-	(CommandErrorCode)(0),      // 2: nabbed.agent.v2.CommandErrorCode
-	(LibraryKind)(0),           // 3: nabbed.agent.v2.LibraryKind
-	(ImportMode)(0),            // 4: nabbed.agent.v2.ImportMode
-	(Protocol)(0),              // 5: nabbed.agent.v2.Protocol
-	(PayloadKind)(0),           // 6: nabbed.agent.v2.PayloadKind
-	(DownloadState)(0),         // 7: nabbed.agent.v2.DownloadState
-	(FailureClass)(0),          // 8: nabbed.agent.v2.FailureClass
-	(Severity)(0),              // 9: nabbed.agent.v2.Severity
-	(*Header)(nil),             // 10: nabbed.agent.v2.Header
-	(*ControlMessage)(nil),     // 11: nabbed.agent.v2.ControlMessage
-	(*AgentMessage)(nil),       // 12: nabbed.agent.v2.AgentMessage
-	(*Hello)(nil),              // 13: nabbed.agent.v2.Hello
-	(*LocalSourceSummary)(nil), // 14: nabbed.agent.v2.LocalSourceSummary
-	(*Welcome)(nil),            // 15: nabbed.agent.v2.Welcome
-	(*Heartbeat)(nil),          // 16: nabbed.agent.v2.Heartbeat
-	(*HeartbeatAck)(nil),       // 17: nabbed.agent.v2.HeartbeatAck
-	(*GoAway)(nil),             // 18: nabbed.agent.v2.GoAway
-	(*Command)(nil),            // 19: nabbed.agent.v2.Command
-	(*StartDownload)(nil),      // 20: nabbed.agent.v2.StartDownload
-	(*UpdateDownload)(nil),     // 21: nabbed.agent.v2.UpdateDownload
-	(*PauseDownload)(nil),      // 22: nabbed.agent.v2.PauseDownload
-	(*ResumeDownload)(nil),     // 23: nabbed.agent.v2.ResumeDownload
-	(*RetryDownload)(nil),      // 24: nabbed.agent.v2.RetryDownload
-	(*CancelDownload)(nil),     // 25: nabbed.agent.v2.CancelDownload
-	(*PutLibraryRoot)(nil),     // 26: nabbed.agent.v2.PutLibraryRoot
-	(*RemoveLibraryRoot)(nil),  // 27: nabbed.agent.v2.RemoveLibraryRoot
-	(*SetImportPolicy)(nil),    // 28: nabbed.agent.v2.SetImportPolicy
-	(*RescanLibrary)(nil),      // 29: nabbed.agent.v2.RescanLibrary
-	(*PutSource)(nil),          // 30: nabbed.agent.v2.PutSource
-	(*RemoveSource)(nil),       // 31: nabbed.agent.v2.RemoveSource
-	(*SetAgentSettings)(nil),   // 32: nabbed.agent.v2.SetAgentSettings
-	(*CommandResult)(nil),      // 33: nabbed.agent.v2.CommandResult
-	(*LibraryRoot)(nil),        // 34: nabbed.agent.v2.LibraryRoot
-	(*Source)(nil),             // 35: nabbed.agent.v2.Source
-	(*PathSanitizer)(nil),      // 36: nabbed.agent.v2.PathSanitizer
-	(*Download)(nil),           // 37: nabbed.agent.v2.Download
-	(*Release)(nil),            // 38: nabbed.agent.v2.Release
-	(*PayloadRef)(nil),         // 39: nabbed.agent.v2.PayloadRef
-	(*MediaRef)(nil),           // 40: nabbed.agent.v2.MediaRef
-	(*NamingContext)(nil),      // 41: nabbed.agent.v2.NamingContext
-	(*Quality)(nil),            // 42: nabbed.agent.v2.Quality
-	(*Query)(nil),              // 43: nabbed.agent.v2.Query
-	(*BrowseFilesystem)(nil),   // 44: nabbed.agent.v2.BrowseFilesystem
-	(*TestSource)(nil),         // 45: nabbed.agent.v2.TestSource
-	(*GetStatus)(nil),          // 46: nabbed.agent.v2.GetStatus
-	(*QueryResult)(nil),        // 47: nabbed.agent.v2.QueryResult
-	(*Event)(nil),              // 48: nabbed.agent.v2.Event
-	(*Failure)(nil),            // 49: nabbed.agent.v2.Failure
-	(*Note)(nil),               // 50: nabbed.agent.v2.Note
-	(*DownloadStats)(nil),      // 51: nabbed.agent.v2.DownloadStats
-	(*DownloadUpdate)(nil),     // 52: nabbed.agent.v2.DownloadUpdate
-	(*ImportedFile)(nil),       // 53: nabbed.agent.v2.ImportedFile
-	(*ImportCompleted)(nil),    // 54: nabbed.agent.v2.ImportCompleted
-	(*ImportFailed)(nil),       // 55: nabbed.agent.v2.ImportFailed
-	(*InventoryEntry)(nil),     // 56: nabbed.agent.v2.InventoryEntry
-	(*InventoryReport)(nil),    // 57: nabbed.agent.v2.InventoryReport
-	(*SourceHealth)(nil),       // 58: nabbed.agent.v2.SourceHealth
-	(*AgentNotice)(nil),        // 59: nabbed.agent.v2.AgentNotice
-	(*EventAck)(nil),           // 60: nabbed.agent.v2.EventAck
-	(*Telemetry)(nil),          // 61: nabbed.agent.v2.Telemetry
-	(*DownloadProgress)(nil),   // 62: nabbed.agent.v2.DownloadProgress
-	(*RootDiskFree)(nil),       // 63: nabbed.agent.v2.RootDiskFree
-	(*HostStats)(nil),          // 64: nabbed.agent.v2.HostStats
-	nil,                        // 65: nabbed.agent.v2.Header.TraceContextEntry
-	nil,                        // 66: nabbed.agent.v2.Note.AttrsEntry
-	nil,                        // 67: nabbed.agent.v2.AgentNotice.AttrsEntry
+	(GoAwayReason)(0),             // 0: nabbed.agent.v2.GoAwayReason
+	(CommandOutcome)(0),           // 1: nabbed.agent.v2.CommandOutcome
+	(CommandErrorCode)(0),         // 2: nabbed.agent.v2.CommandErrorCode
+	(LibraryKind)(0),              // 3: nabbed.agent.v2.LibraryKind
+	(ImportMode)(0),               // 4: nabbed.agent.v2.ImportMode
+	(Protocol)(0),                 // 5: nabbed.agent.v2.Protocol
+	(PayloadKind)(0),              // 6: nabbed.agent.v2.PayloadKind
+	(DownloadState)(0),            // 7: nabbed.agent.v2.DownloadState
+	(FailureClass)(0),             // 8: nabbed.agent.v2.FailureClass
+	(Severity)(0),                 // 9: nabbed.agent.v2.Severity
+	(*Header)(nil),                // 10: nabbed.agent.v2.Header
+	(*ControlMessage)(nil),        // 11: nabbed.agent.v2.ControlMessage
+	(*AgentMessage)(nil),          // 12: nabbed.agent.v2.AgentMessage
+	(*Hello)(nil),                 // 13: nabbed.agent.v2.Hello
+	(*LocalSourceSummary)(nil),    // 14: nabbed.agent.v2.LocalSourceSummary
+	(*Welcome)(nil),               // 15: nabbed.agent.v2.Welcome
+	(*Heartbeat)(nil),             // 16: nabbed.agent.v2.Heartbeat
+	(*HeartbeatAck)(nil),          // 17: nabbed.agent.v2.HeartbeatAck
+	(*GoAway)(nil),                // 18: nabbed.agent.v2.GoAway
+	(*Command)(nil),               // 19: nabbed.agent.v2.Command
+	(*StartDownload)(nil),         // 20: nabbed.agent.v2.StartDownload
+	(*UpdateDownload)(nil),        // 21: nabbed.agent.v2.UpdateDownload
+	(*PauseDownload)(nil),         // 22: nabbed.agent.v2.PauseDownload
+	(*ResumeDownload)(nil),        // 23: nabbed.agent.v2.ResumeDownload
+	(*RetryDownload)(nil),         // 24: nabbed.agent.v2.RetryDownload
+	(*CancelDownload)(nil),        // 25: nabbed.agent.v2.CancelDownload
+	(*PutLibraryRoot)(nil),        // 26: nabbed.agent.v2.PutLibraryRoot
+	(*RemoveLibraryRoot)(nil),     // 27: nabbed.agent.v2.RemoveLibraryRoot
+	(*SetImportPolicy)(nil),       // 28: nabbed.agent.v2.SetImportPolicy
+	(*RescanLibrary)(nil),         // 29: nabbed.agent.v2.RescanLibrary
+	(*PutSource)(nil),             // 30: nabbed.agent.v2.PutSource
+	(*RemoveSource)(nil),          // 31: nabbed.agent.v2.RemoveSource
+	(*SetAgentSettings)(nil),      // 32: nabbed.agent.v2.SetAgentSettings
+	(*CommandResult)(nil),         // 33: nabbed.agent.v2.CommandResult
+	(*LibraryRoot)(nil),           // 34: nabbed.agent.v2.LibraryRoot
+	(*Source)(nil),                // 35: nabbed.agent.v2.Source
+	(*PathSanitizer)(nil),         // 36: nabbed.agent.v2.PathSanitizer
+	(*Download)(nil),              // 37: nabbed.agent.v2.Download
+	(*Release)(nil),               // 38: nabbed.agent.v2.Release
+	(*PayloadRef)(nil),            // 39: nabbed.agent.v2.PayloadRef
+	(*MediaRef)(nil),              // 40: nabbed.agent.v2.MediaRef
+	(*NamingContext)(nil),         // 41: nabbed.agent.v2.NamingContext
+	(*Quality)(nil),               // 42: nabbed.agent.v2.Quality
+	(*Query)(nil),                 // 43: nabbed.agent.v2.Query
+	(*BrowseFilesystem)(nil),      // 44: nabbed.agent.v2.BrowseFilesystem
+	(*TestSource)(nil),            // 45: nabbed.agent.v2.TestSource
+	(*GetStatus)(nil),             // 46: nabbed.agent.v2.GetStatus
+	(*QueryResult)(nil),           // 47: nabbed.agent.v2.QueryResult
+	(*Event)(nil),                 // 48: nabbed.agent.v2.Event
+	(*Failure)(nil),               // 49: nabbed.agent.v2.Failure
+	(*Note)(nil),                  // 50: nabbed.agent.v2.Note
+	(*DownloadStats)(nil),         // 51: nabbed.agent.v2.DownloadStats
+	(*DownloadUpdate)(nil),        // 52: nabbed.agent.v2.DownloadUpdate
+	(*ImportedFile)(nil),          // 53: nabbed.agent.v2.ImportedFile
+	(*ImportCompleted)(nil),       // 54: nabbed.agent.v2.ImportCompleted
+	(*ImportFailed)(nil),          // 55: nabbed.agent.v2.ImportFailed
+	(*InventoryEntry)(nil),        // 56: nabbed.agent.v2.InventoryEntry
+	(*InventoryReport)(nil),       // 57: nabbed.agent.v2.InventoryReport
+	(*SourceHealth)(nil),          // 58: nabbed.agent.v2.SourceHealth
+	(*AgentNotice)(nil),           // 59: nabbed.agent.v2.AgentNotice
+	(*EventAck)(nil),              // 60: nabbed.agent.v2.EventAck
+	(*Telemetry)(nil),             // 61: nabbed.agent.v2.Telemetry
+	(*DownloadProgress)(nil),      // 62: nabbed.agent.v2.DownloadProgress
+	(*DownloadProgressBatch)(nil), // 63: nabbed.agent.v2.DownloadProgressBatch
+	(*RootDiskFree)(nil),          // 64: nabbed.agent.v2.RootDiskFree
+	(*HostStats)(nil),             // 65: nabbed.agent.v2.HostStats
+	nil,                           // 66: nabbed.agent.v2.Header.TraceContextEntry
+	nil,                           // 67: nabbed.agent.v2.Note.AttrsEntry
+	nil,                           // 68: nabbed.agent.v2.AgentNotice.AttrsEntry
 }
 var file_nabbed_agent_v2_agent_proto_depIdxs = []int32{
-	65, // 0: nabbed.agent.v2.Header.trace_context:type_name -> nabbed.agent.v2.Header.TraceContextEntry
+	66, // 0: nabbed.agent.v2.Header.trace_context:type_name -> nabbed.agent.v2.Header.TraceContextEntry
 	10, // 1: nabbed.agent.v2.ControlMessage.header:type_name -> nabbed.agent.v2.Header
 	15, // 2: nabbed.agent.v2.ControlMessage.welcome:type_name -> nabbed.agent.v2.Welcome
 	17, // 3: nabbed.agent.v2.ControlMessage.heartbeat_ack:type_name -> nabbed.agent.v2.HeartbeatAck
@@ -5269,7 +5338,7 @@ var file_nabbed_agent_v2_agent_proto_depIdxs = []int32{
 	59, // 54: nabbed.agent.v2.Event.agent_notice:type_name -> nabbed.agent.v2.AgentNotice
 	8,  // 55: nabbed.agent.v2.Failure.class:type_name -> nabbed.agent.v2.FailureClass
 	9,  // 56: nabbed.agent.v2.Note.severity:type_name -> nabbed.agent.v2.Severity
-	66, // 57: nabbed.agent.v2.Note.attrs:type_name -> nabbed.agent.v2.Note.AttrsEntry
+	67, // 57: nabbed.agent.v2.Note.attrs:type_name -> nabbed.agent.v2.Note.AttrsEntry
 	7,  // 58: nabbed.agent.v2.DownloadUpdate.state:type_name -> nabbed.agent.v2.DownloadState
 	49, // 59: nabbed.agent.v2.DownloadUpdate.failure:type_name -> nabbed.agent.v2.Failure
 	50, // 60: nabbed.agent.v2.DownloadUpdate.notes:type_name -> nabbed.agent.v2.Note
@@ -5279,17 +5348,19 @@ var file_nabbed_agent_v2_agent_proto_depIdxs = []int32{
 	49, // 64: nabbed.agent.v2.ImportFailed.failure:type_name -> nabbed.agent.v2.Failure
 	56, // 65: nabbed.agent.v2.InventoryReport.entries:type_name -> nabbed.agent.v2.InventoryEntry
 	9,  // 66: nabbed.agent.v2.AgentNotice.severity:type_name -> nabbed.agent.v2.Severity
-	67, // 67: nabbed.agent.v2.AgentNotice.attrs:type_name -> nabbed.agent.v2.AgentNotice.AttrsEntry
+	68, // 67: nabbed.agent.v2.AgentNotice.attrs:type_name -> nabbed.agent.v2.AgentNotice.AttrsEntry
 	62, // 68: nabbed.agent.v2.Telemetry.download_progress:type_name -> nabbed.agent.v2.DownloadProgress
-	64, // 69: nabbed.agent.v2.Telemetry.host_stats:type_name -> nabbed.agent.v2.HostStats
-	63, // 70: nabbed.agent.v2.HostStats.disk_free:type_name -> nabbed.agent.v2.RootDiskFree
-	12, // 71: nabbed.agent.v2.AgentGatewayService.Connect:input_type -> nabbed.agent.v2.AgentMessage
-	11, // 72: nabbed.agent.v2.AgentGatewayService.Connect:output_type -> nabbed.agent.v2.ControlMessage
-	72, // [72:73] is the sub-list for method output_type
-	71, // [71:72] is the sub-list for method input_type
-	71, // [71:71] is the sub-list for extension type_name
-	71, // [71:71] is the sub-list for extension extendee
-	0,  // [0:71] is the sub-list for field type_name
+	65, // 69: nabbed.agent.v2.Telemetry.host_stats:type_name -> nabbed.agent.v2.HostStats
+	63, // 70: nabbed.agent.v2.Telemetry.download_progress_batch:type_name -> nabbed.agent.v2.DownloadProgressBatch
+	62, // 71: nabbed.agent.v2.DownloadProgressBatch.downloads:type_name -> nabbed.agent.v2.DownloadProgress
+	64, // 72: nabbed.agent.v2.HostStats.disk_free:type_name -> nabbed.agent.v2.RootDiskFree
+	12, // 73: nabbed.agent.v2.AgentGatewayService.Connect:input_type -> nabbed.agent.v2.AgentMessage
+	11, // 74: nabbed.agent.v2.AgentGatewayService.Connect:output_type -> nabbed.agent.v2.ControlMessage
+	74, // [74:75] is the sub-list for method output_type
+	73, // [73:74] is the sub-list for method input_type
+	73, // [73:73] is the sub-list for extension type_name
+	73, // [73:73] is the sub-list for extension extendee
+	0,  // [0:73] is the sub-list for field type_name
 }
 
 func init() { file_nabbed_agent_v2_agent_proto_init() }
@@ -5351,15 +5422,16 @@ func file_nabbed_agent_v2_agent_proto_init() {
 	file_nabbed_agent_v2_agent_proto_msgTypes[51].OneofWrappers = []any{
 		(*Telemetry_DownloadProgress)(nil),
 		(*Telemetry_HostStats)(nil),
+		(*Telemetry_DownloadProgressBatch)(nil),
 	}
-	file_nabbed_agent_v2_agent_proto_msgTypes[54].OneofWrappers = []any{}
+	file_nabbed_agent_v2_agent_proto_msgTypes[55].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nabbed_agent_v2_agent_proto_rawDesc), len(file_nabbed_agent_v2_agent_proto_rawDesc)),
 			NumEnums:      10,
-			NumMessages:   58,
+			NumMessages:   59,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
