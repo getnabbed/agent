@@ -14,8 +14,10 @@ make test         # go test -race -cover ./...
 make lint         # golangci-lint (config in .golangci.yml)
 make proto        # regenerate pkg/proto from proto/ with buf
 make proto-lint   # buf lint + format check
-make proto-breaking # buf breaking against the published module
-make proto-push   # publish proto/ to buf.build/nabbed/agent (labels main, git-<sha>)
+make proto-breaking # buf breaking against main on GitHub (no BSR access needed)
+make proto-breaking-bsr # buf breaking against BSR main (maintainers)
+make proto-push-label # push only the git-<sha12> label to the BSR (maintainers)
+make proto-push   # move BSR main from an up-to-date main; CI normally does this
 make vuln         # govulncheck on code paths the agent calls
 make docker       # build the container image from source
 make snapshot     # unsigned GoReleaser build of every release archive
@@ -29,10 +31,28 @@ Generated code in `pkg/proto/` is committed and never edited by hand. Change
 `proto/` and run `make proto`.
 
 The wire contract is published to the Buf Schema Registry as
-`buf.build/nabbed/agent`, and the cloud generates its code from there. After
-changing `proto/`: run `make proto proto-lint proto-breaking`, commit, then
-`make proto-push`. Tell the cloud the `git-<sha>` label to pin. Never make a
-breaking change in `v2`.
+`buf.build/nabbed/agent` (private), and the cloud generates its code from
+there, pinning a `git-<sha12>` label (the first 12 characters of the agent
+commit). After changing `proto/`: run `make proto proto-lint proto-breaking`
+and commit. None of that needs BSR access, and CI runs the same checks on
+every PR. Never make a breaking change in `v2`.
+
+Publishing is CI's job, in `.github/workflows/proto-publish.yml`:
+
+- On merge: when `proto/`, `buf.yaml` or `buf.lock` changes on main, CI
+  checks the contract and pushes labels `main` and `git-<sha12>`. Only main
+  ever moves `main`. Its token lives in the `buf` environment, which only
+  main can use.
+- Before merge: if the cloud needs a contract change before the agent PR
+  merges, push the branch and run `make proto-push-label`. It pushes only
+  `git-<sha12>`. Tell the cloud that label, then move the cloud to the merge
+  commit's label once the agent PR merges.
+- Catch-up: if BSR `main` is behind main (a failed run, a push too large for
+  path filters, or a merge before this workflow existed), run the workflow
+  on main: `gh workflow run proto-publish.yml --repo getnabbed/agent --ref main`.
+
+`make proto-push` is the manual fallback. It refuses to run anywhere but a
+clean main that matches getnabbed/agent main.
 
 ## Go style guide
 
