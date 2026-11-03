@@ -35,8 +35,8 @@ type Job struct {
 	Notes *Notes
 }
 
-// Progress is reported by engines while downloading, at most about once a
-// second.
+// Progress is reported by engines while downloading, about every
+// ProgressInterval, with SpeedBps measured by a Meter.
 type Progress struct {
 	Bytes    int64
 	Total    int64
@@ -104,7 +104,8 @@ type Engine interface {
 	Available() bool
 	// Download fetches the job's data into job.Dir, resuming any partial
 	// data already there. It returns ctx.Err() when cancelled, a *Failure
-	// for classified failures, or any other error for unexpected ones.
+	// for classified failures, or any other error for unexpected ones. It
+	// calls progress only before it returns.
 	Download(ctx context.Context, job Job, progress func(Progress)) (*Result, error)
 }
 
