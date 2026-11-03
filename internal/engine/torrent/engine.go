@@ -285,11 +285,12 @@ func (e *Engine) awaitInfo(ctx context.Context, t *torrent.Torrent) error {
 // await reports progress until every byte is verified, failing the job if
 // nothing arrives for StallTimeout.
 func (e *Engine) await(ctx context.Context, t *torrent.Torrent, progress func(engine.Progress)) error {
-	tick := time.NewTicker(time.Second)
+	tick := time.NewTicker(engine.ProgressInterval)
 	defer tick.Stop()
 
 	total := t.Length()
-	last, lastAt, lastGain := t.BytesCompleted(), time.Now(), time.Now()
+	last, lastGain := t.BytesCompleted(), time.Now()
+	meter := engine.NewMeter(lastGain, last)
 
 	for {
 		if t.BytesMissing() == 0 {
@@ -305,16 +306,18 @@ func (e *Engine) await(ctx context.Context, t *torrent.Torrent, progress func(en
 			return ctx.Err()
 		case now := <-tick.C:
 			done := t.BytesCompleted()
-			speed := int64(float64(done-last) / now.Sub(lastAt).Seconds())
+			speed := meter.Add(now, done)
 
+			// Any gain since the previous tick restarts the stall clock.
+			// StallTimeout is a duration, not a count of ticks.
 			if done > last {
 				lastGain = now
 			}
 
-			last, lastAt = done, now
+			last = done
 
 			if progress != nil {
-				progress(engine.Progress{Bytes: done, Total: total, SpeedBps: max(speed, 0)})
+				progress(engine.Progress{Bytes: done, Total: total, SpeedBps: speed})
 			}
 
 			if now.Sub(lastGain) > e.cfg.StallTimeout {

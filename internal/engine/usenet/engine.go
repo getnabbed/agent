@@ -23,7 +23,6 @@ const (
 	// provider at once.
 	segmentAttempts    = 3
 	checkpointInterval = 5 * time.Second
-	progressInterval   = time.Second
 	janitorInterval    = 30 * time.Second
 
 	// maxTransfers bounds articles being fetched, decoded and written at
@@ -941,14 +940,14 @@ func (d *download) closeFiles() error {
 }
 
 func (d *download) background(stop <-chan struct{}, total int64, progress func(engine.Progress)) {
-	pt := time.NewTicker(progressInterval)
+	pt := time.NewTicker(engine.ProgressInterval)
 	defer pt.Stop()
 
 	ct := time.NewTicker(checkpointInterval)
 	defer ct.Stop()
 
 	start, startAt := d.doneBytes.Load(), time.Now()
-	last, lastAt := start, startAt
+	meter := engine.NewMeter(startAt, start)
 
 	for {
 		select {
@@ -968,8 +967,7 @@ func (d *download) background(stop <-chan struct{}, total int64, progress func(e
 			}
 		case now := <-pt.C:
 			cur := d.doneBytes.Load()
-			speed := int64(float64(cur-last) / now.Sub(lastAt).Seconds())
-			last, lastAt = cur, now
+			speed := meter.Add(now, cur)
 
 			if progress != nil {
 				progress(engine.Progress{Bytes: cur, Total: total, SpeedBps: speed})
