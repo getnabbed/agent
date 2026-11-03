@@ -471,9 +471,9 @@ func sleep(ctx context.Context, d time.Duration) error {
 
 func newID() string { return ids.NewV7() }
 
-// SendTelemetry records the latest value for key (for example
-// "progress/<download_id>"). Telemetry is lossy: it is dropped when no
-// session is live and only the newest value per key is sent.
+// SendTelemetry records the latest value for key (for example "progress"
+// or "host_stats"). Telemetry is lossy: it is dropped when no session is
+// live and only the newest value per key is sent.
 func (c *Client) SendTelemetry(key string, t *pb.Telemetry) {
 	if s := c.current.Load(); s != nil {
 		s.telemetry.put(key, &pb.AgentMessage{Header: c.header(""), Kind: &pb.AgentMessage_Telemetry{Telemetry: t}})
