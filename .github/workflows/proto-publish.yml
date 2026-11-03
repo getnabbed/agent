@@ -1,0 +1,97 @@
+name: Proto publish
+
+# Publishes the wire contract in proto/ to the Buf Schema Registry as
+# buf.build/nabbed/agent, labelled
+#   main          (moves with main)
+#   git-<sha12>   (one commit, never moves; the cloud pins these)
+# Only reviewed code on main publishes. This never runs for pull requests,
+# and BUF_TOKEN lives in the buf environment, which only main can use.
+# A git-<sha12> label for an agent PR that has not merged yet is pushed by
+# a maintainer with make proto-push-label (see CONTRIBUTING.md).
+on:
+  push:
+    branches: [main]
+    paths:
+      - proto/**
+      - buf.yaml
+      - buf.lock
+  # Catch up when the BSR is behind main, such as after a failed run or a
+  # push too large for path filters: run it on main from the Actions tab, or
+  #   gh workflow run proto-publish.yml --repo getnabbed/agent --ref main
+  workflow_dispatch:
+
+# Default to nothing; the job asks for exactly what it needs.
+permissions: {}
+
+# One publish at a time, never cancelled mid-push. A newer queued run
+# replaces an older queued one, so main still ends on the newest commit.
+concurrency:
+  group: proto-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to the BSR
+    # Never in forks, and only on main whichever event started the run. The
+    # buf environment enforces main by itself; this stops other refs from
+    # asking for it.
+    if: github.repository == 'getnabbed/agent' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Protected environment holding BUF_TOKEN. Limit its deployment branches
+    # to main in the repository settings, so no other ref can read the token,
+    # even from a workflow added on a branch. Never add BUF_TOKEN as a
+    # repository or organization secret.
+    environment: buf
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # A re-run of an old run, or a run that starts after a newer proto
+      # change merged, must not move main back.
+      - name: Require main's current contract
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$GITHUB_SHA is not on main"; exit 1; }
+          git diff --quiet "$GITHUB_SHA" origin/main -- proto buf.yaml buf.lock \
+            || { echo "::error::main has newer proto changes than $GITHUB_SHA; the run for the newest one publishes main"; exit 1; }
+
+      # Install buf only, without a token, so the token reaches just the two
+      # steps that need it. The action's own push step labels only the Git
+      # branch (--git-metadata), not the git-<sha12> labels the cloud pins,
+      # and creates the module if it is missing.
+      - uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
+        with:
+          version: 1.75.0
+          setup_only: true
+      - run: buf lint
+      - run: buf format --diff --exit-code
+      # Against what consumers get as main today, which also covers a
+      # catch-up run after main moved on without publishing.
+      - name: Check for breaking changes against the published main
+        env:
+          BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
+        run: |
+          test -n "$BUF_TOKEN" || { echo "::error::BUF_TOKEN is not set in the buf environment"; exit 1; }
+          buf breaking --against buf.build/nabbed/agent:main
+
+      # No --create: a missing module is an error, never a new module.
+      - name: Push
+        env:
+          BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
+        run: |
+          label="git-${GITHUB_SHA::12}"
+          commit=$(buf push --label main --label "$label" \
+            --source-control-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA")
+          echo "pushed $commit, labelled main and $label"
+          {
+            echo "### Proto published"
+            echo
+            echo "- \`buf.build/nabbed/agent:$label\`, also labelled \`main\`"
+            echo "- BSR commit: \`$commit\`"
+          } >>"$GITHUB_STEP_SUMMARY"
