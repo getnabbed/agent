@@ -53,6 +53,11 @@ type Manager struct {
 	kick      chan struct{}
 	telemetry atomic.Pointer[Telemetry]
 
+	// batch holds progress until sendProgress sends it, every
+	// progressEvery. Tests make progressEvery long and flush by hand.
+	batch         progressBatch
+	progressEvery time.Duration
+
 	mu      sync.Mutex
 	running map[string]*runner
 	wg      sync.WaitGroup
@@ -94,6 +99,8 @@ func New(cfg Config) (*Manager, error) {
 		log:     cfg.Log.With("component", "download"),
 		kick:    make(chan struct{}, 1),
 		running: map[string]*runner{},
+
+		progressEvery: engine.ProgressInterval,
 	}
 
 	for _, e := range cfg.Engines {
@@ -103,7 +110,7 @@ func New(cfg Config) (*Manager, error) {
 	return m, nil
 }
 
-// SetTelemetry sets where progress goes. It may be called after Run.
+// SetTelemetry sets where progress batches go. It may be called after Run.
 func (m *Manager) SetTelemetry(t Telemetry) { m.telemetry.Store(&t) }
 
 // Capabilities lists the protocols this agent can download now, for Hello.
@@ -139,14 +146,17 @@ func (m *Manager) Kick() {
 	}
 }
 
-// Run schedules downloads until ctx ends, then stops every runner. Work in
-// progress stays in its state and resumes on the next Run.
+// Run schedules downloads and sends their progress until ctx ends, then
+// stops every runner. Work in progress stays in its state and resumes on
+// the next Run.
 func (m *Manager) Run(ctx context.Context) error {
 	t := time.NewTicker(reconcileInterval)
 	defer t.Stop()
 
 	defer m.wg.Wait()
 	defer m.stopAll()
+
+	m.wg.Go(func() { m.sendProgress(ctx) })
 
 	for {
 		m.reconcile(ctx)
@@ -416,6 +426,9 @@ func (m *Manager) stage(ctx context.Context, r *row, notes *engine.Notes) (*engi
 			return nil, nil, engine.Fail(pb.FailureClass_FAILURE_CLASS_CLIENT, true, "no %s engine available", protocolName(r.Protocol))
 		}
 
+		// However the run ends, its last progress goes out once more.
+		defer m.batch.end(r.ID)
+
 		res, err := e.Download(ctx, job, func(p engine.Progress) { m.progress(r.ID, p) })
 
 		return res, nil, err
@@ -453,24 +466,6 @@ func (m *Manager) job(r *row) engine.Job {
 	}
 
 	return j
-}
-
-func (m *Manager) progress(id string, p engine.Progress) {
-	t := m.telemetry.Load()
-	if t == nil {
-		return
-	}
-
-	dp := &pb.DownloadProgress{DownloadId: id, Bytes: uint64(max(p.Bytes, 0)), SpeedBps: uint64(max(p.SpeedBps, 0))}
-	if p.Total > 0 {
-		dp.Percent = float32(100 * float64(p.Bytes) / float64(p.Total))
-	}
-
-	if p.SpeedBps > 0 && p.Total > p.Bytes {
-		dp.EtaS = uint64((p.Total - p.Bytes) / p.SpeedBps)
-	}
-
-	(*t).SendTelemetry("progress/"+id, &pb.Telemetry{Kind: &pb.Telemetry_DownloadProgress{DownloadProgress: dp}})
 }
 
 // defaultClass classifies an unexpected error by the stage it came from.

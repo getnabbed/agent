@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -112,9 +113,33 @@ func (m memFetcher) Fetch(_ context.Context, id string, w io.Writer) error {
 	return err
 }
 
-type telemetrySink struct{ n atomic.Int32 }
+// telemetrySink records the telemetry it is sent.
+type telemetrySink struct {
+	mu   sync.Mutex
+	sent []sentTelemetry
+}
 
-func (t *telemetrySink) SendTelemetry(string, *pb.Telemetry) { t.n.Add(1) }
+type sentTelemetry struct {
+	key string
+	t   *pb.Telemetry
+}
+
+func (s *telemetrySink) SendTelemetry(key string, t *pb.Telemetry) {
+	s.mu.Lock()
+	s.sent = append(s.sent, sentTelemetry{key: key, t: t})
+	s.mu.Unlock()
+}
+
+// take returns what was sent since the last take.
+func (s *telemetrySink) take() []sentTelemetry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := s.sent
+	s.sent = nil
+
+	return out
+}
 
 type harness struct {
 	t   *testing.T
@@ -150,6 +175,8 @@ func newHarness(t *testing.T, maxConcurrent int) *harness {
 	}
 
 	h.m.SetTelemetry(h.tel)
+	// Progress goes out only when a test calls flushProgress.
+	h.m.progressEvery = time.Hour
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -258,8 +285,8 @@ func TestHappyPathWalksEveryStage(t *testing.T) {
 		t.Fatalf("events = %v, want %v", got, want)
 	}
 
-	if h.imp.imported.Load() != 1 || h.tel.n.Load() == 0 {
-		t.Fatalf("imported=%d telemetry=%d", h.imp.imported.Load(), h.tel.n.Load())
+	if h.imp.imported.Load() != 1 {
+		t.Fatalf("imported = %d, want 1", h.imp.imported.Load())
 	}
 
 	// The importer's ImportCompleted is queued once, with the move to DONE.

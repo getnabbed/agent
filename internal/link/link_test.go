@@ -512,11 +512,12 @@ func TestUnackedEventsReplayedAfterReconnect(t *testing.T) {
 func TestTelemetryLatestWins(t *testing.T) {
 	l := newLatest()
 	for i := range 3 {
-		l.put("progress/d1", &pb.AgentMessage{Kind: &pb.AgentMessage_Telemetry{Telemetry: &pb.Telemetry{Kind: &pb.Telemetry_DownloadProgress{DownloadProgress: &pb.DownloadProgress{Percent: float32(i)}}}}})
+		batch := &pb.DownloadProgressBatch{Downloads: []*pb.DownloadProgress{{DownloadId: "d1", Percent: float32(i)}}}
+		l.put("progress", &pb.AgentMessage{Kind: &pb.AgentMessage_Telemetry{Telemetry: &pb.Telemetry{Kind: &pb.Telemetry_DownloadProgressBatch{DownloadProgressBatch: batch}}}})
 	}
 
 	out := l.drain()
-	if len(out) != 1 || out[0].GetTelemetry().GetDownloadProgress().GetPercent() != 2 {
+	if len(out) != 1 || out[0].GetTelemetry().GetDownloadProgressBatch().GetDownloads()[0].GetPercent() != 2 {
 		t.Fatalf("drain = %v, want only the latest value", out)
 	}
 }
