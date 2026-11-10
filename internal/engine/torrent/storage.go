@@ -11,6 +11,7 @@ import (
 	"sort"
 	"sync"
 
+	g "github.com/anacrolix/generics"
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/anacrolix/torrent/storage"
 )
@@ -260,7 +261,7 @@ func (p *filePiece) MarkComplete() error {
 		}
 	}
 
-	return p.t.pc.Set(p.key(), true)
+	return p.t.pc.Set(p.key(), g.Some(true))
 }
 
 // MarkNotComplete implements storage.PieceImpl.
@@ -271,7 +272,7 @@ func (p *filePiece) MarkNotComplete() error {
 
 	defer p.t.leave()
 
-	return p.t.pc.Set(p.key(), false)
+	return p.t.pc.Set(p.key(), g.Some(false))
 }
 
 // Completion implements storage.PieceImpl. A piece recorded as complete
